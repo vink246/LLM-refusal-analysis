@@ -72,3 +72,9 @@ conda env create --prefix /scratch/<path_to_env_parent_dir>/llm_refusal_env --fi
 ```bash
 conda deactivate
 ```
+
+## Dataset Download Instructions
+
+```bash
+hf download bench-llm/or-bench --repo-type dataset --local-dir datasets/bench-llm_or-bench
+```
