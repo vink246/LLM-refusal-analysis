@@ -76,5 +76,5 @@ conda deactivate
 ## Dataset Download Instructions
 
 ```bash
-hf download bench-llm/or-bench --repo-type dataset --local-dir datasets/bench-llm_or-bench
+hf download bench-llm/or-bench --repo-type dataset --local-dir /home/hice1/<gt_username>/scratch/datasets/or-bench
 ```
