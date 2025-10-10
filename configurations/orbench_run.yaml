@@ -1,0 +1,17 @@
+dataset_dir: "../datasets/OR-Bench"         # Path to OR-Bench dataset
+categories:                                 # OR-Bench categories we want to analyze refusal across
+  - violence
+  - misinformation
+num_samples_per_category: 100
+shuffle: true                               # shuffle order of data 
+models:                                     # path to inferring models
+  - "meta-llama/Llama-2-7b-chat-hf"
+  - "mistralai/Mistral-7B-Instruct-v0.1"
+result_dir: "../results"
+save_activations: true
+activation_layers:
+  - "residuals_10"
+  - "residuals_15"
+  - "mlp_11"
+batch_size: 4
+device: "cuda"
