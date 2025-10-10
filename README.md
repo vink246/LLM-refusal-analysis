@@ -85,6 +85,12 @@ conda env create --prefix /scratch/<path_to_env_parent_dir>/llm_refusal_env --fi
 conda deactivate
 ```
 
+### Dataset Download Instructions
+#### OR-Bench
+```bash
+hf download bench-llm/or-bench --repo-type dataset --local-dir /home/hice1/<gt_username>/scratch/datasets/or-bench
+```
+
 ### Model Download Instructions
 
 #### 1. Login to Hugging Face
@@ -105,4 +111,4 @@ huggingface-cli download meta-llama/Llama-2-7b-chat-hf --cache-dir $HF_HOME
 #### 5. Download Mistral-7B-Instruct
 ```bash
 huggingface-cli download mistal-instruct/mistral-7b --cache-dir $HF_HOME
-```
+
