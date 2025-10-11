@@ -1,7 +1,7 @@
 dataset_dir: "../datasets/OR-Bench"         # Path to OR-Bench dataset
 categories:                                 # OR-Bench categories we want to analyze refusal across
   - violence
-  - misinformation
+  - deception
 num_samples_per_category: 100
 shuffle: true                               # shuffle order of data 
 models:                                     # path to inferring models
@@ -15,3 +15,9 @@ activation_layers:
   - "mlp_11"
 batch_size: 4
 device: "cuda"
+analysis:
+  similarity_threshold: 0.8
+  activation_ratio_threshold: 2.0
+  modularity_assessment:
+    monolithic_threshold: 0.8
+    partially_modular_threshold: 0.5

@@ -7,8 +7,8 @@ import yaml
 import torch
 from tqdm import tqdm
 import json
-from src.data_utils import load_orbench_dataset # yet to implement
-from src.models import load_model_with_hooks # yet to implement
+from src.data_utils import load_dataset 
+from src.models import load_model_with_hooks
 
 def run_experiment(config_path):
     # Load config
@@ -24,7 +24,7 @@ def run_experiment(config_path):
     # Load dataset
     data_by_category = {}
     for cat in cfg['categories']:
-        data_by_category[cat] = load_orbench_dataset(
+        data_by_category[cat] = load_dataset(
             dataset_dir=cfg['dataset_dir'],
             category=cat,
             num_samples=cfg['num_samples_per_category'],

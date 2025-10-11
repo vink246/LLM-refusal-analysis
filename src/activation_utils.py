@@ -10,84 +10,65 @@ class ActivationManager:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
-    def save_activations(self, activations: Dict[str, Any], filename: str):
-        """Save activations to file"""
-        filepath = self.output_dir / f"{filename}.pkl"
+    def save_activations_batch(self, activations: Dict[str, torch.Tensor], filename: str):
+        """Save batch activations in OR-Bench compatible format"""
+        filepath = self.output_dir / f"{filename}.pt"
         
-        # Convert any torch tensors to numpy for serialization
-        processed_activations = self._process_activations_for_saving(activations)
+        # Convert to CPU and ensure proper format
+        processed_activations = {}
+        for layer_name, tensor in activations.items():
+            if tensor is not None:
+                processed_activations[layer_name] = tensor.cpu()
         
-        with open(filepath, 'wb') as f:
-            pickle.dump(processed_activations, f)
+        torch.save(processed_activations, filepath)
     
-    def load_activations(self, filename: str) -> Dict[str, Any]:
-        """Load activations from file"""
-        filepath = self.output_dir / f"{filename}.pkl"
-        with open(filepath, 'rb') as f:
-            return pickle.load(f)
+    def load_activations(self, filename: str) -> Dict[str, torch.Tensor]:
+        """Load saved activations"""
+        filepath = self.output_dir / f"{filename}.pt"
+        return torch.load(filepath)
     
-    def _process_activations_for_saving(self, activations: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert torch tensors to numpy for serialization"""
-        processed = {}
-        for key, value in activations.items():
-            if isinstance(value, dict):
-                processed[key] = self._process_activations_for_saving(value)
-            elif isinstance(value, torch.Tensor):
-                processed[key] = {
-                    'numpy_array': value.numpy(),
-                    'shape': value.shape,
-                    'dtype': str(value.dtype)
-                }
-            else:
-                processed[key] = value
-        return processed
-    
-    def extract_activation_pattern(self, activations: Dict, component_weights: Dict = None) -> torch.Tensor:
-        """Extract flattened activation pattern from collected activations"""
-        if component_weights is None:
-            component_weights = {
-                'mlp_output': 1.0,
-                'ffn_gate_proj': 0.3,
-                'ffn_up_proj': 0.3,
-                'ffn_down_proj': 0.4,
-                'residual_input': 0.2,
-                'residual_output': 0.2
-            }
+    def merge_activations(self, activation_batches: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        """Merge multiple activation batches along batch dimension"""
+        merged = {}
         
+        for batch in activation_batches:
+            for layer_name, tensor in batch.items():
+                if layer_name not in merged:
+                    merged[layer_name] = []
+                merged[layer_name].append(tensor)
+        
+        # Concatenate along batch dimension
+        for layer_name in merged:
+            merged[layer_name] = torch.cat(merged[layer_name], dim=0)
+        
+        return merged
+    
+    def extract_patterns_from_batch(self, activations: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Extract patterns from batch activations (OR-Bench format)"""
         patterns = []
         
-        for layer_key in sorted(activations.keys(), key=lambda x: int(x.split('_')[1])):
-            layer_acts = activations[layer_key]
-            
-            for component, weight in component_weights.items():
-                if component in layer_acts:
-                    act_data = layer_acts[component]
-                    if isinstance(act_data, dict) and 'numpy_array' in act_data:
-                        # Load from saved format
-                        act_tensor = torch.from_numpy(act_data['numpy_array'])
-                    else:
-                        act_tensor = act_data
-                    
-                    # Take mean across sequence dimension, then flatten
-                    act_mean = act_tensor.mean(dim=1)  # Average over tokens
-                    flattened = act_mean.flatten() * weight
-                    patterns.append(flattened)
+        for layer_name, tensor in activations.items():
+            if tensor is not None:
+                # Average over sequence dimension if present
+                if tensor.dim() > 2:
+                    tensor = tensor.mean(dim=1)  # Average over tokens
+                
+                # Flatten and weight
+                flattened = tensor.flatten()
+                
+                # Apply layer-specific weights
+                weight = self._get_layer_weight(layer_name)
+                patterns.append(flattened * weight)
         
         return torch.cat(patterns) if patterns else torch.tensor([])
     
-    def aggregate_activations_by_category(self, results: List[Dict]) -> Dict[str, torch.Tensor]:
-        """Aggregate activations across multiple examples"""
-        aggregated = {}
-        
-        for result in results:
-            pattern = self.extract_activation_pattern(result['activations'])
-            if pattern.numel() > 0:
-                if 'patterns' not in aggregated:
-                    aggregated['patterns'] = []
-                aggregated['patterns'].append(pattern)
-        
-        if aggregated.get('patterns'):
-            aggregated['mean_pattern'] = torch.stack(aggregated['patterns']).mean(dim=0)
-            aggregated['std_pattern'] = torch.stack(aggregated['patterns']).std(dim=0)
-        
-        return aggregated
+    def _get_layer_weight(self, layer_name: str) -> float:
+        """Get weight for different layer types"""
+        if layer_name.startswith('residuals_'):
+            return 0.3
+        elif layer_name.startswith('mlp_'):
+            return 0.7
+        elif layer_name.startswith('attention_'):
+            return 0.2
+        else:
+            return 0.5
