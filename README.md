@@ -111,4 +111,3 @@ huggingface-cli download meta-llama/Llama-2-7b-chat-hf --cache-dir $HF_HOME
 #### 5. Download Mistral-7B-Instruct
 ```bash
 huggingface-cli download mistal-instruct/mistral-7b --cache-dir $HF_HOME
-
