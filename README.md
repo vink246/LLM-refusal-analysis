@@ -105,9 +105,8 @@ export HF_HOME=/home/hice1/vkulkarni46/scratch/huggingface
 ```
 
 #### 3. Download LLaMA-2-7B-Chat
-```bash
-huggingface-cli download meta-llama/Llama-2-7b-chat-hf --cache-dir $HF_HOME
+hf download meta-llama/Llama-2-7b-chat-hf --cache-dir $HF_HOME
 ```
 #### 5. Download Mistral-7B-Instruct
 ```bash
-huggingface-cli download mistal-instruct/mistral-7b --cache-dir $HF_HOME
+hf download mistralai/Mistral-7B-Instruct-v0.1 --cache-dir $HF_HOME
