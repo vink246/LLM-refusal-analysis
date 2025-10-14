@@ -7,7 +7,7 @@ shuffle: true                               # shuffle order of data
 models:                                     # path to inferring models
   - "meta-llama/Llama-2-7b-chat-hf"
   - "mistralai/Mistral-7B-Instruct-v0.1"
-result_dir: "../results"
+result_dir: "results"
 save_activations: true
 activation_layers:
   - "residuals_10"
