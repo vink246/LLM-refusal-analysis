@@ -1,4 +1,4 @@
-dataset_dir: "../datasets/OR-Bench"         # Path to OR-Bench dataset
+dataset_dir: "processed_orbench_data"         # Path to processed OR-Bench dataset
 categories:                                 # OR-Bench categories we want to analyze refusal across
   - violence
   - deception

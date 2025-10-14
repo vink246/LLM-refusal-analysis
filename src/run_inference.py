@@ -3,12 +3,20 @@ PLEACEHOLDER UNTESTED SCRIPT TO RUN INFERENCE
 '''
 
 import os
+import sys
 import yaml
 import torch
 from tqdm import tqdm
 import json
-from src.data_utils import load_dataset 
-from src.models import load_model_with_hooks
+
+# Add current directory and src directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, current_dir)
+sys.path.insert(0, parent_dir)
+
+from data_utils import load_all_categories
+from models import load_model_with_hooks
 
 def run_experiment(config_path):
     # Load config
@@ -22,14 +30,12 @@ def run_experiment(config_path):
     os.makedirs(refusal_dir, exist_ok=True)
 
     # Load dataset
-    data_by_category = {}
-    for cat in cfg['categories']:
-        data_by_category[cat] = load_dataset(
-            dataset_dir=cfg['dataset_dir'],
-            category=cat,
-            num_samples=cfg['num_samples_per_category'],
-            shuffle=cfg.get('shuffle', True)
-        )
+    data_by_category = load_all_categories(
+        dataset_dir=cfg['dataset_dir'],
+        categories=cfg['categories'],
+        num_samples_per_category=cfg['num_samples_per_category'],
+        shuffle=cfg.get('shuffle', True)
+    )
 
     # Load models
     models = {}
@@ -51,23 +57,26 @@ def run_experiment(config_path):
             all_activations = []
 
             for i in tqdm(range(0, len(prompts), batch_size)):
-                batch_prompts = prompts[i:i+batch_size]
+                batch_data = prompts[i:i+batch_size]
+                # Extract just the prompt strings for the model
+                batch_prompts = [p['prompt'] for p in batch_data]
                 # Run inference and collect activations
                 outputs, activations = model_obj.run_with_activations(batch_prompts)
                 
-                # Simple refusal detection via OR-Bench label (assume batch_prompts includes label)
-                batch_labels = [p['refusal_label'] for p in batch_prompts]
+                # Simple refusal detection via OR-Bench label (assume batch_data includes label)
+                batch_labels = [p['refusal_label'] for p in batch_data]
                 all_refusal_labels.extend(batch_labels)
                 all_activations.append(activations)
 
-            # Save refusal labels
-            refusal_file = os.path.join(refusal_dir, f"{model_name}_{category}_refusal.json")
+            # Save refusal labels (sanitize model name for filename)
+            safe_model_name = model_name.replace('/', '-').replace(' ', '_')
+            refusal_file = os.path.join(refusal_dir, f"{safe_model_name}_{category}_refusal.json")
             with open(refusal_file, 'w') as f:
                 json.dump(all_refusal_labels, f)
 
             # Save activations
             if cfg.get('save_activations', True):
-                activations_file = os.path.join(activation_dir, f"{model_name}_{category}_activations.pt")
+                activations_file = os.path.join(activation_dir, f"{safe_model_name}_{category}_activations.pt")
                 # Concatenate activation dicts along batch dimension
                 merged_activations = {}
                 for act_dict in all_activations:
