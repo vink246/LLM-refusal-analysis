@@ -1,4 +1,4 @@
-dataset_dir: "../datasets/OR-Bench"         # Path to OR-Bench dataset
+dataset_dir: "processed_orbench_data"         # Path to processed OR-Bench dataset
 categories:                                 # OR-Bench categories we want to analyze refusal across
   - violence
   - deception
@@ -7,7 +7,7 @@ shuffle: true                               # shuffle order of data
 models:                                     # path to inferring models
   - "meta-llama/Llama-2-7b-chat-hf"
   - "mistralai/Mistral-7B-Instruct-v0.1"
-result_dir: "../results"
+result_dir: "results"
 save_activations: true
 activation_layers:
   - "residuals_10"
