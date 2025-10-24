@@ -84,7 +84,7 @@ def load_orbench_dataset(dataset_dir: str, category: str, num_samples: int = 100
         category=category,
         num_safe_samples=int(num_samples * safe_toxic_ratio),
         num_toxic_samples=int(num_samples * (1 - safe_toxic_ratio)),
-        include_hard=True,
+        include_hard=False,
         shuffle=shuffle
     )
     return category_data
