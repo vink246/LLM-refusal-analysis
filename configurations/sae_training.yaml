@@ -1,0 +1,42 @@
+# Configuration for SAE training and circuit discovery
+
+# Model settings
+models:
+  - "meta-llama/Llama-2-7b-chat-hf"
+  - "mistralai/Mistral-7B-Instruct-v0.2"
+
+# Dataset settings  
+dataset_dir: "data/or-bench"
+categories: ["violence", "misinformation", "illegal_activity", "privacy"]
+num_samples_per_category: 200
+
+# Activation layers for SAE training
+activation_layers:
+  - "residuals_10"
+  - "residuals_20" 
+  - "mlp_15"
+  - "mlp_25"
+  - "attention_15"
+  - "attention_25"
+
+# SAE training parameters
+sae_hidden_dim: 8192  # 8x expansion factor as in paper
+sae_max_samples: 100000  # Maximum samples per layer for training
+sae_batch_size: 512
+sae_epochs: 100
+sparsity_coeff: 0.01  # L1 sparsity coefficient
+
+# Circuit discovery parameters
+node_threshold: 0.1
+edge_threshold: 0.01
+aggregation_method: "none"
+attribution_method: "stats"  # Using statistics since we have pre-computed activations
+
+# Runtime settings
+device: "cuda"
+result_dir: "results/circuit_analysis"
+sae_dir: "results/saes"
+
+# Execution mode
+train_saes: true  # Set to false if SAEs are already trained
+discover_circuits: true

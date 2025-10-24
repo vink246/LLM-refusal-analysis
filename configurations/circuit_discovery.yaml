@@ -1,0 +1,36 @@
+# Configuration for refusal circuit discovery
+
+# Model settings
+models:
+  - "meta-llama/Llama-2-7b-chat-hf"
+  - "mistralai/Mistral-7B-Instruct-v0.2"
+
+# Dataset settings  
+dataset_dir: "data/or-bench"
+categories: ["violence", "misinformation", "illegal_activity", "privacy"]
+num_samples_per_category: 200
+shuffle: true
+
+# Activation collection
+activation_layers:
+  - "residuals_10"
+  - "residuals_20" 
+  - "mlp_15"
+  - "mlp_25"
+  - "attention_15"
+  - "attention_25"
+
+# Circuit discovery parameters
+node_threshold: 0.1
+edge_threshold: 0.01
+aggregation_method: "none"
+attribution_method: "ig"
+
+# Runtime settings
+device: "cuda"
+batch_size: 4
+result_dir: "results/circuit_analysis"
+
+# Output settings
+save_activations: true
+create_visualizations: true
