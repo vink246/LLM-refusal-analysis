@@ -10,6 +10,7 @@ from tqdm import tqdm
 from typing import Dict, List, Any
 import json
 from pathlib import Path
+from datetime import datetime
 
 # Add parent directory to path for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +23,7 @@ from src.data_utils import load_all_categories
 from src.models import load_model_with_hooks
 from src.activation_utils import ActivationManager
 from circuits.circuits_utils import CircuitDiscoverer, CircuitConfig, SparseFeatureCircuit, CircuitVisualizer, compare_circuits_across_categories
+import matplotlib.pyplot as plt
 from circuits.circuit_discovery_with_saes import SAECircuitDiscoverer
 from src.sae_trainer import SAEManager, get_activation_files
 
@@ -37,6 +39,7 @@ class RefusalCircuitAnalyzer:
         self.activation_manager = ActivationManager(str(self.result_dir / 'activations'))
         self.sae_manager = SAEManager(self.config.get('sae_dir', str(self.result_dir / 'saes')))
         self.circuits = {}  # Store discovered circuits: {model_name: {category: circuit}}
+        self.comparison_results = {}  # Store comparison results for final report
     
     def run_analysis(self):
         """Main analysis workflow"""
@@ -176,13 +179,15 @@ class RefusalCircuitAnalyzer:
     
     def _compare_circuits(self):
         """Compare circuits across categories to test monolithic vs modular hypothesis"""
+        self.comparison_results = {}  # Store for final report
+        
         for model_name, model_circuits in self.circuits.items():
             if len(model_circuits) < 2:
                 print(f"  {model_name}: Need at least 2 categories for comparison")
                 continue
             
             print(f"\n  Comparing circuits for {model_name}...")
-            similarities = compare_circuits_across_categories(model_circuits)
+            similarities, similarity_matrix = compare_circuits_across_categories(model_circuits)
             
             # Assess modularity
             similarity_values = list(similarities.values())
@@ -201,17 +206,46 @@ class RefusalCircuitAnalyzer:
                 print(f"    Average similarity: {avg_similarity:.3f}")
                 print(f"    Assessment: {assessment}")
                 
+                # Store results for final report
+                self.comparison_results[model_name] = {
+                    'similarities': similarities,
+                    'similarity_matrix': similarity_matrix,
+                    'average_similarity': avg_similarity,
+                    'assessment': assessment,
+                    'categories': list(model_circuits.keys())
+                }
+                
                 # Save comparison results
                 comparison_file = self.result_dir / "circuits" / f"{model_name.replace('/', '-')}_comparison.json"
                 comparison_data = {
                     'model_name': model_name,
                     'similarities': {k: float(v) for k, v in similarities.items()},
+                    'similarity_matrix': {k: {k2: float(v2) for k2, v2 in v.items()} 
+                                         for k, v in similarity_matrix.items()},
                     'average_similarity': float(avg_similarity),
-                    'assessment': assessment
+                    'assessment': assessment,
+                    'categories': list(model_circuits.keys())
                 }
                 
                 with open(comparison_file, 'w') as f:
                     json.dump(comparison_data, f, indent=2)
+                
+                # Generate similarity heatmap
+                try:
+                    viz_dir = self.result_dir / "visualizations"
+                    viz_dir.mkdir(exist_ok=True)
+                    safe_model_name = model_name.replace('/', '-').replace(' ', '_')
+                    
+                    fig = CircuitVisualizer.create_similarity_heatmap(
+                        similarity_matrix,
+                        title=f"Circuit Similarity: {model_name}"
+                    )
+                    heatmap_path = viz_dir / f"{safe_model_name}_similarity_heatmap.png"
+                    fig.savefig(heatmap_path, dpi=150, bbox_inches='tight')
+                    plt.close(fig)
+                    print(f"    Saved similarity heatmap: {heatmap_path}")
+                except Exception as e:
+                    print(f"    Error creating similarity heatmap: {e}")
     
     def _generate_reports(self):
         """Generate visualization and analysis reports"""
@@ -232,9 +266,112 @@ class RefusalCircuitAnalyzer:
                     fig = CircuitVisualizer.plot_circuit(circuit, top_k_nodes=30, top_k_edges=50)
                     fig_path = viz_dir / f"{safe_model_name}_{category}_circuit.png"
                     fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+                    plt.close(fig)
                     print(f"    Saved visualization: {fig_path}")
                 except Exception as e:
                     print(f"    Error creating visualization for {category}: {e}")
+        
+        # Generate final comprehensive report
+        self._generate_final_report()
+    
+    def _generate_final_report(self):
+        """Generate comprehensive final analysis report"""
+        print("\n  Generating final analysis report...")
+        
+        report = {
+            'summary': {
+                'total_models': len(self.circuits),
+                'total_categories': len(set(cat for model_circuits in self.circuits.values() 
+                                           for cat in model_circuits.keys())),
+                'analysis_date': datetime.now().isoformat()
+            },
+            'models': {}
+        }
+        
+        # Add circuit statistics for each model
+        for model_name, model_circuits in self.circuits.items():
+            safe_model_name = model_name.replace('/', '-').replace(' ', '_')
+            model_report = {
+                'model_name': model_name,
+                'categories_analyzed': list(model_circuits.keys()),
+                'circuit_statistics': {}
+            }
+            
+            # Circuit statistics per category
+            for category, circuit in model_circuits.items():
+                model_report['circuit_statistics'][category] = {
+                    'num_nodes': len(circuit.nodes),
+                    'num_edges': len(circuit.edges),
+                    'top_node_importance': max(circuit.node_importances.values()) if circuit.node_importances else 0.0,
+                    'avg_node_importance': sum(circuit.node_importances.values()) / len(circuit.node_importances) if circuit.node_importances else 0.0,
+                    'top_edge_importance': max(circuit.edge_importances.values()) if circuit.edge_importances else 0.0,
+                    'avg_edge_importance': sum(circuit.edge_importances.values()) / len(circuit.edge_importances) if circuit.edge_importances else 0.0
+                }
+            
+            # Add comparison results if available
+            if hasattr(self, 'comparison_results') and model_name in self.comparison_results:
+                comp = self.comparison_results[model_name]
+                model_report['comparison'] = {
+                    'average_similarity': float(comp['average_similarity']),
+                    'assessment': comp['assessment'],
+                    'pairwise_similarities': {k: float(v) for k, v in comp['similarities'].items()}
+                }
+            
+            report['models'][model_name] = model_report
+        
+        # Save report
+        report_file = self.result_dir / "circuit_analysis_report.json"
+        with open(report_file, 'w') as f:
+            json.dump(report, f, indent=2)
+        
+        # Generate text summary
+        self._generate_text_summary(report)
+        
+        print(f"    Final report saved to: {report_file}")
+    
+    def _generate_text_summary(self, report: Dict):
+        """Generate human-readable text summary report"""
+        summary_file = self.result_dir / "circuit_analysis_summary.txt"
+        
+        with open(summary_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("CIRCUIT ANALYSIS SUMMARY REPORT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            f.write(f"Total Models Analyzed: {report['summary']['total_models']}\n")
+            f.write(f"Total Categories: {report['summary']['total_categories']}\n\n")
+            
+            for model_name, model_data in report['models'].items():
+                f.write("-" * 80 + "\n")
+                f.write(f"Model: {model_name}\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Categories: {', '.join(model_data['categories_analyzed'])}\n\n")
+                
+                # Circuit statistics
+                f.write("Circuit Statistics:\n")
+                for category, stats in model_data['circuit_statistics'].items():
+                    f.write(f"  {category}:\n")
+                    f.write(f"    Nodes: {stats['num_nodes']}, Edges: {stats['num_edges']}\n")
+                    f.write(f"    Avg Node Importance: {stats['avg_node_importance']:.4f}\n")
+                    f.write(f"    Avg Edge Importance: {stats['avg_edge_importance']:.4f}\n")
+                
+                # Comparison results
+                if 'comparison' in model_data:
+                    comp = model_data['comparison']
+                    f.write(f"\nComparison Results:\n")
+                    f.write(f"  Average Similarity: {comp['average_similarity']:.4f}\n")
+                    f.write(f"  Assessment: {comp['assessment']}\n")
+                    f.write(f"  Pairwise Similarities:\n")
+                    for pair, sim in comp['pairwise_similarities'].items():
+                        f.write(f"    {pair}: {sim:.4f}\n")
+                
+                f.write("\n")
+            
+            f.write("=" * 80 + "\n")
+            f.write("END OF REPORT\n")
+            f.write("=" * 80 + "\n")
+        
+        print(f"    Text summary saved to: {summary_file}")
     
     def _discover_category_circuit(self, model, model_name: str, category: str, 
                                  samples: List[Dict]) -> SparseFeatureCircuit:

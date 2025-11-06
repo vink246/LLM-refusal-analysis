@@ -288,27 +288,82 @@ class CircuitVisualizer:
         plt.title("Sparse Feature Circuit")
         plt.axis('off')
         return plt.gcf()
+    
+    @staticmethod
+    def create_similarity_heatmap(similarity_matrix: Dict[str, Dict[str, float]], 
+                                 figsize: Tuple[int, int] = (10, 8),
+                                 title: str = "Circuit Similarity Heatmap"):
+        """Create a heatmap visualization of circuit similarities across categories"""
+        
+        categories = sorted(list(similarity_matrix.keys()))
+        n = len(categories)
+        
+        # Build matrix
+        matrix = np.zeros((n, n))
+        for i, cat1 in enumerate(categories):
+            for j, cat2 in enumerate(categories):
+                if cat1 in similarity_matrix and cat2 in similarity_matrix[cat1]:
+                    matrix[i, j] = similarity_matrix[cat1][cat2]
+                elif cat2 in similarity_matrix and cat1 in similarity_matrix[cat2]:
+                    matrix[j, i] = similarity_matrix[cat2][cat1]
+                elif cat1 == cat2:
+                    matrix[i, j] = 1.0
+        
+        # Create heatmap
+        fig, ax = plt.subplots(figsize=figsize)
+        im = ax.imshow(matrix, cmap='RdYlGn', vmin=0, vmax=1, aspect='auto')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Similarity Score', rotation=270, labelpad=20)
+        
+        # Set ticks and labels
+        ax.set_xticks(np.arange(n))
+        ax.set_yticks(np.arange(n))
+        ax.set_xticklabels(categories, rotation=45, ha='right')
+        ax.set_yticklabels(categories)
+        
+        # Add text annotations
+        for i in range(n):
+            for j in range(n):
+                text = ax.text(j, i, f'{matrix[i, j]:.2f}',
+                             ha="center", va="center", color="black", fontweight='bold')
+        
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        return fig
 
 
-def compare_circuits_across_categories(circuit_dict: Dict[str, SparseFeatureCircuit]) -> Dict[str, float]:
+def compare_circuits_across_categories(circuit_dict: Dict[str, SparseFeatureCircuit]) -> Tuple[Dict[str, float], Dict[str, Dict[str, float]]]:
     """
     Compare circuits across different refusal categories to test modular vs monolithic hypotheses
     
-    Returns similarity metrics between circuits
+    Returns:
+        similarities: Dictionary of pairwise similarities (for backward compatibility)
+        similarity_matrix: Full matrix of similarities between all category pairs
     """
     
-    categories = list(circuit_dict.keys())
+    categories = sorted(list(circuit_dict.keys()))
     similarities = {}
+    similarity_matrix = {}
     
-    for i, cat1 in enumerate(categories):
-        for j, cat2 in enumerate(categories):
-            if i < j:
+    # Compute all pairwise similarities
+    for cat1 in categories:
+        similarity_matrix[cat1] = {}
+        for cat2 in categories:
+            if cat1 == cat2:
+                similarity_matrix[cat1][cat2] = 1.0
+            else:
                 similarity = _compute_circuit_similarity(
                     circuit_dict[cat1], circuit_dict[cat2]
                 )
-                similarities[f"{cat1}_{cat2}"] = similarity
+                similarity_matrix[cat1][cat2] = similarity
                 
-    return similarities
+                # Also store in pairwise format for backward compatibility
+                if cat1 < cat2:  # Only store once per pair
+                    similarities[f"{cat1}_{cat2}"] = similarity
+                
+    return similarities, similarity_matrix
 
 
 def _compute_circuit_similarity(circuit1: SparseFeatureCircuit, circuit2: SparseFeatureCircuit) -> float:

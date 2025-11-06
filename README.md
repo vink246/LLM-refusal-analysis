@@ -217,8 +217,10 @@ This will:
 - Discover circuits for each model-category combination
 - Save circuits to `results/circuits/`
 - Compare circuits across categories
-- Generate similarity metrics and modularity assessment
-- Create visualizations in `results/visualizations/`
+- Generate similarity metrics and modularity assessment (monolithic/partially modular/modular)
+- Create similarity heatmaps showing circuit relationships across categories
+- Generate circuit visualizations for each category
+- Create comprehensive final analysis reports (JSON and text format)
 
 ### Step 4: Analyze Results
 
@@ -263,7 +265,11 @@ results/
 │   ├── <model>_<category>_circuit.json
 │   └── <model>_comparison.json
 ├── visualizations/           # Circuit visualizations (.png)
-└── analysis_results.json    # Final analysis report
+│   ├── <model>_<category>_circuit.png      # Individual circuit plots
+│   └── <model>_similarity_heatmap.png     # Cross-category similarity heatmaps
+├── circuit_analysis_report.json    # Comprehensive circuit analysis (JSON)
+├── circuit_analysis_summary.txt    # Human-readable analysis summary
+└── analysis_results.json    # Inference evaluation report
 ```
 
 ## Running on PACE ICE
@@ -327,6 +333,25 @@ SAE training can take several hours. Use a long-running job:
 - Some shared features, some category-specific
 
 The analysis automatically assesses which hypothesis is supported based on circuit similarity metrics.
+
+### Interpreting Results
+
+After running circuit analysis, check the following outputs:
+
+1. **Similarity Heatmaps** (`results/visualizations/<model>_similarity_heatmap.png`):
+   - Visual representation of circuit similarities between categories
+   - Green = high similarity (monolithic), Red = low similarity (modular)
+   - Diagonal is always 1.0 (self-similarity)
+
+2. **Comparison Results** (`results/circuits/<model>_comparison.json`):
+   - Pairwise similarity scores between categories
+   - Average similarity across all category pairs
+   - Assessment: MONOLITHIC, PARTIALLY MODULAR, or MODULAR
+
+3. **Final Reports**:
+   - `circuit_analysis_report.json`: Complete analysis with all metrics
+   - `circuit_analysis_summary.txt`: Human-readable summary with key findings
+   - Includes circuit statistics (nodes, edges, importance metrics) per category
 
 ## Troubleshooting
 
