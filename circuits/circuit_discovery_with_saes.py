@@ -3,14 +3,25 @@ Circuit discovery using trained sparse autoencoders
 Integrated with the methodology from the sparse feature circuits paper
 """
 
+import os
+import sys
 import torch
 import torch.nn as nn
 from typing import Dict, List, Any, Tuple, Optional
 import numpy as np
 from collections import defaultdict
+from pathlib import Path
+import json
 
-from circuit_utils import CircuitDiscoverer, CircuitConfig, SparseFeatureCircuit
-from sae_trainer import SAEManager, get_activation_files
+# Add parent directory to path for imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+sys.path.insert(0, os.path.join(parent_dir, 'src'))
+sys.path.insert(0, current_dir)
+
+from circuits.circuits_utils import CircuitDiscoverer, CircuitConfig, SparseFeatureCircuit
+from src.sae_trainer import SAEManager, get_activation_files
 
 
 class SAECircuitDiscoverer(CircuitDiscoverer):
@@ -125,25 +136,60 @@ class SAECircuitDiscoverer(CircuitDiscoverer):
                                     refusal_labels: List[bool],
                                     important_nodes: Dict[str, List[Tuple]],
                                     metric_type: str) -> Dict[Tuple[str, str], float]:
-        """Compute importance of edges between SAE features"""
-        
-        # This is a simplified version - in practice, you'd want to compute
-        # causal relationships between features across layers
+        """Compute importance of edges between SAE features using correlation analysis"""
         
         edge_importances = {}
-        layers = list(important_nodes.keys())
+        layers = sorted(important_nodes.keys(), key=lambda x: int(''.join(filter(str.isdigit, x)) or 0))
+        refusal_labels_tensor = torch.tensor(refusal_labels, dtype=torch.float32)
         
-        # For demo purposes, create random edges
-        # In real implementation, you'd compute actual causal relationships
-        for i, layer_i in enumerate(layers):
-            for j, layer_j in enumerate(layers):
-                if i < j:  # Only consider connections from earlier to later layers
-                    for node_i in important_nodes[layer_i][:10]:  # Limit for demo
-                        for node_j in important_nodes[layer_j][:10]:
-                            edge_key = (f"{layer_i}_feature_{node_i[0]}", f"{layer_j}_feature_{node_j[0]}")
-                            # Use product of importances as proxy for edge importance
-                            edge_importance = node_i[1] * node_j[1] * 0.1
-                            edge_importances[edge_key] = edge_importance
+        # Get feature activations for important nodes
+        node_activations = {}
+        for layer, nodes in important_nodes.items():
+            if layer not in encoded_activations:
+                continue
+            features = encoded_activations[layer]
+            if features.dim() == 3:
+                features = features.mean(dim=1)  # Average over sequence
+            
+            node_activations[layer] = {}
+            for feature_idx, importance in nodes:
+                node_activations[layer][feature_idx] = features[:, feature_idx]
+        
+        # Compute edge importances between consecutive layers
+        for i in range(len(layers) - 1):
+            layer_i = layers[i]
+            layer_j = layers[i + 1]
+            
+            if layer_i not in node_activations or layer_j not in node_activations:
+                continue
+            
+            # Compute correlations between features in adjacent layers
+            for node_i_idx, (node_i_feat, node_i_imp) in enumerate(important_nodes[layer_i][:20]):  # Limit for efficiency
+                if node_i_feat not in node_activations[layer_i]:
+                    continue
+                    
+                feat_i_vals = node_activations[layer_i][node_i_feat]
+                
+                for node_j_idx, (node_j_feat, node_j_imp) in enumerate(important_nodes[layer_j][:20]):
+                    if node_j_feat not in node_activations[layer_j]:
+                        continue
+                    
+                    feat_j_vals = node_activations[layer_j][node_j_feat]
+                    
+                    # Compute correlation between features
+                    if feat_i_vals.std() > 0 and feat_j_vals.std() > 0:
+                        correlation = torch.corrcoef(torch.stack([feat_i_vals, feat_j_vals]))[0, 1]
+                        if torch.isnan(correlation):
+                            correlation = 0.0
+                        
+                        # Edge importance = correlation * product of node importances
+                        # This captures both feature interaction strength and individual importance
+                        edge_importance = abs(correlation) * node_i_imp * node_j_imp
+                        
+                        source_id = f"{layer_i}_feature_{node_i_feat}"
+                        target_id = f"{layer_j}_feature_{node_j_feat}"
+                        edge_key = (source_id, target_id)
+                        edge_importances[edge_key] = edge_importance.item()
         
         return edge_importances
     
@@ -155,21 +201,49 @@ class SAECircuitDiscoverer(CircuitDiscoverer):
         
         circuit = SparseFeatureCircuit()
         
+        # Track node IDs for edge creation
+        node_id_map = {}  # (layer, feature_idx) -> node_id
+        
         # Add SAE feature nodes
         for layer, nodes in important_nodes.items():
+            layer_num = int(''.join(filter(str.isdigit, layer)) or 0)
             for feature_idx, importance in nodes:
-                circuit.add_node(
+                node_id = circuit.add_node(
                     feature_id=str(feature_idx),
-                    layer=int(''.join(filter(str.isdigit, layer)) or 0),  # Extract layer number
+                    layer=layer_num,
                     position=0,  # Would need token positions for more granularity
                     importance=importance,
                     feature_type="sae_feature"
                 )
+                node_id_map[(layer, feature_idx)] = node_id
         
         # Add edges between SAE features
-        for (source, target), importance in edge_importances.items():
+        for (source_str, target_str), importance in edge_importances.items():
             if abs(importance) > self.config.edge_threshold:
-                circuit.add_edge(source, target, importance)
+                # Parse source and target from strings like "residuals_10_feature_123"
+                try:
+                    # Extract layer and feature from source/target strings
+                    source_parts = source_str.split('_feature_')
+                    target_parts = target_str.split('_feature_')
+                    
+                    if len(source_parts) == 2 and len(target_parts) == 2:
+                        source_layer = source_parts[0]
+                        source_feat = int(source_parts[1])
+                        target_layer = target_parts[0]
+                        target_feat = int(target_parts[1])
+                        
+                        source_key = (source_layer, source_feat)
+                        target_key = (target_layer, target_feat)
+                        
+                        if source_key in node_id_map and target_key in node_id_map:
+                            circuit.add_edge(
+                                node_id_map[source_key], 
+                                node_id_map[target_key], 
+                                importance
+                            )
+                except (ValueError, KeyError) as e:
+                    # Skip edges that can't be parsed
+                    continue
         
         return circuit
 
@@ -262,14 +336,35 @@ def main():
             # 2. Load the refusal labels
             # 3. Run circuit discovery
             
-            activation_file = f"{config['result_dir']}/activations/{model_name.replace('/', '-')}_{category}_activations.pt"
+            safe_model_name = model_name.replace('/', '-').replace(' ', '_')
+            activation_file = os.path.join(
+                config['result_dir'], 
+                'activations', 
+                f"{safe_model_name}_{category}_activations.pt"
+            )
             
             if not os.path.exists(activation_file):
                 print(f"    Activation file not found: {activation_file}")
                 continue
             
-            # Placeholder for refusal labels - you'd load these from your data
-            refusal_labels = [True, False] * 100  # This should be your actual labels
+            # Load refusal labels from saved file
+            refusal_file = os.path.join(
+                config['result_dir'],
+                'refusal_labels',
+                f"{safe_model_name}_{category}_refusal.json"
+            )
+            
+            if os.path.exists(refusal_file):
+                with open(refusal_file, 'r') as f:
+                    refusal_labels = json.load(f)
+            else:
+                print(f"    Warning: Refusal labels not found at {refusal_file}, using placeholder")
+                # Try to infer from activation file size
+                activations = torch.load(activation_file, map_location='cpu')
+                if activations:
+                    first_layer = list(activations.keys())[0]
+                    batch_size = activations[first_layer].shape[0]
+                    refusal_labels = [False] * batch_size  # Default to no refusal
             
             try:
                 circuit = discoverer.discover_circuit_with_saes(

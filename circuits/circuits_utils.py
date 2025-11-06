@@ -312,17 +312,49 @@ def compare_circuits_across_categories(circuit_dict: Dict[str, SparseFeatureCirc
 
 
 def _compute_circuit_similarity(circuit1: SparseFeatureCircuit, circuit2: SparseFeatureCircuit) -> float:
-    """Compute similarity between two circuits"""
+    """Compute similarity between two circuits using multiple metrics"""
     
-    # Get node sets
+    # Get top nodes (use top 100 for comparison)
     nodes1 = set(circuit1.get_top_nodes(100))
     nodes2 = set(circuit2.get_top_nodes(100))
     
-    # Jaccard similarity
+    # Jaccard similarity on nodes
     intersection = nodes1.intersection(nodes2)
     union = nodes1.union(nodes2)
     
     if len(union) == 0:
-        return 0.0
+        node_similarity = 0.0
+    else:
+        node_similarity = len(intersection) / len(union)
+    
+    # Edge similarity
+    edges1 = set(circuit1.get_top_edges(100))
+    edges2 = set(circuit2.get_top_edges(100))
+    
+    edge_intersection = edges1.intersection(edges2)
+    edge_union = edges1.union(edges2)
+    
+    if len(edge_union) == 0:
+        edge_similarity = 0.0
+    else:
+        edge_similarity = len(edge_intersection) / len(edge_union)
+    
+    # Importance correlation (for overlapping nodes)
+    common_nodes = nodes1.intersection(nodes2)
+    if len(common_nodes) > 0:
+        importances1 = [circuit1.node_importances.get(node, 0.0) for node in common_nodes]
+        importances2 = [circuit2.node_importances.get(node, 0.0) for node in common_nodes]
         
-    return len(intersection) / len(union)
+        if np.std(importances1) > 0 and np.std(importances2) > 0:
+            importance_corr = np.corrcoef(importances1, importances2)[0, 1]
+            if np.isnan(importance_corr):
+                importance_corr = 0.0
+        else:
+            importance_corr = 0.0
+    else:
+        importance_corr = 0.0
+    
+    # Weighted combination: 40% nodes, 30% edges, 30% importance correlation
+    combined_similarity = 0.4 * node_similarity + 0.3 * edge_similarity + 0.3 * abs(importance_corr)
+    
+    return combined_similarity

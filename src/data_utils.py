@@ -80,16 +80,30 @@ def load_orbench_dataset(dataset_dir: str, category: str, num_samples: int = 100
         List of processed samples with prompt, category, and refusal_label fields
     """
     processor = ORBenchDataProcessor(dataset_dir)
+    
+    # Calculate samples per type to get exactly num_samples total
+    if safe_toxic_ratio == 0.5:
+        # Equal split: half safe, half toxic
+        safe_samples = num_samples // 2
+        toxic_samples = num_samples - safe_samples
+        include_hard = False  # Don't include hard samples to avoid exceeding num_samples
+    else:
+        # Custom ratio
+        safe_samples = int(num_samples * safe_toxic_ratio)
+        toxic_samples = num_samples - safe_samples
+        include_hard = False
+    
     category_data = processor.extract_category_data(
         category=category,
-        num_safe_samples=int(num_samples * safe_toxic_ratio),
-        num_toxic_samples=int(num_samples * (1 - safe_toxic_ratio)),
-        include_hard=True,
+        num_safe_samples=safe_samples,
+        num_toxic_samples=toxic_samples,
+        include_hard=include_hard,
         shuffle=shuffle
     )
     return category_data
 
-def load_all_categories(dataset_dir: str, categories: List[str], num_samples_per_category: int = 100, shuffle: bool = True) -> Dict[str, List[Dict]]:
+def load_all_categories(dataset_dir: str, categories: List[str], num_samples_per_category: int = 100, 
+                       shuffle: bool = True, safe_toxic_ratio: float = 0.5) -> Dict[str, List[Dict]]:
     """Load data for all specified categories"""
     data_by_category = {}
     
@@ -106,7 +120,7 @@ def load_all_categories(dataset_dir: str, categories: List[str], num_samples_per
                     dataset_dir=dataset_dir,
                     category=category,
                     num_samples=num_samples_per_category,
-                    safe_toxic_ratio=0.5,  # Equal split between safe and toxic
+                    safe_toxic_ratio=safe_toxic_ratio,
                     shuffle=shuffle
                 )
             else:
