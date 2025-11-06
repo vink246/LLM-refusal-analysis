@@ -25,6 +25,7 @@ from src.activation_utils import ActivationManager
 from circuits.circuits_utils import CircuitDiscoverer, CircuitConfig, SparseFeatureCircuit, CircuitVisualizer, compare_circuits_across_categories
 import matplotlib.pyplot as plt
 from circuits.circuit_discovery_with_saes import SAECircuitDiscoverer
+from circuits.statistical_analysis import assess_modularity_with_statistics
 from src.sae_trainer import SAEManager, get_activation_files
 
 class RefusalCircuitAnalyzer:
@@ -32,14 +33,37 @@ class RefusalCircuitAnalyzer:
     
     def __init__(self, config_path: str):
         """Initialize analyzer with configuration"""
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
+        
+        # Validate configuration
+        self._validate_config()
         
         self.result_dir = Path(self.config.get('result_dir', 'results'))
         self.activation_manager = ActivationManager(str(self.result_dir / 'activations'))
         self.sae_manager = SAEManager(self.config.get('sae_dir', str(self.result_dir / 'saes')))
         self.circuits = {}  # Store discovered circuits: {model_name: {category: circuit}}
         self.comparison_results = {}  # Store comparison results for final report
+    
+    def _validate_config(self):
+        """Validate configuration file has required fields"""
+        required_fields = ['models', 'categories', 'activation_layers']
+        missing_fields = [field for field in required_fields if field not in self.config]
+        
+        if missing_fields:
+            raise ValueError(f"Configuration missing required fields: {missing_fields}")
+        
+        if not isinstance(self.config['models'], list) or len(self.config['models']) == 0:
+            raise ValueError("Configuration must specify at least one model")
+        
+        if not isinstance(self.config['categories'], list) or len(self.config['categories']) == 0:
+            raise ValueError("Configuration must specify at least one category")
+        
+        if not isinstance(self.config['activation_layers'], list) or len(self.config['activation_layers']) == 0:
+            raise ValueError("Configuration must specify at least one activation layer")
     
     def run_analysis(self):
         """Main analysis workflow"""
@@ -93,12 +117,33 @@ class RefusalCircuitAnalyzer:
     
     def _discover_circuits_for_model(self, model_name: str):
         """Discover circuits for all categories of a model"""
+        # Validate activation files exist
+        safe_model_name = model_name.replace('/', '-').replace(' ', '_')
+        activation_dir = self.result_dir / 'activations'
+        
+        missing_activations = []
+        for category in self.config['categories']:
+            activation_file = activation_dir / f"{safe_model_name}_{category}_activations.pt"
+            if not activation_file.exists():
+                missing_activations.append(category)
+        
+        if missing_activations:
+            print(f"  Warning: Missing activation files for categories: {missing_activations}")
+            print(f"  Skipping circuit discovery for {model_name}")
+            return
+        
         # Load trained SAEs
         saes = self.sae_manager.load_saes_for_model(model_name, self.config['activation_layers'])
         if not saes:
             print(f"  No trained SAEs found for {model_name}")
             print(f"  Run with train_saes=true or ensure SAEs are already trained")
             return
+        
+        # Validate SAEs match expected layers
+        missing_layers = [layer for layer in self.config['activation_layers'] if layer not in saes]
+        if missing_layers:
+            print(f"  Warning: Missing SAEs for layers: {missing_layers}")
+            print(f"  Continuing with available SAEs...")
         
         # Initialize circuit discoverer
         circuit_config = CircuitConfig(
@@ -189,22 +234,29 @@ class RefusalCircuitAnalyzer:
             print(f"\n  Comparing circuits for {model_name}...")
             similarities, similarity_matrix = compare_circuits_across_categories(model_circuits)
             
-            # Assess modularity
+            # Assess modularity with statistical significance
             similarity_values = list(similarities.values())
             if similarity_values:
-                avg_similarity = sum(similarity_values) / len(similarity_values)
                 monolithic_threshold = self.config.get('analysis', {}).get('modularity_assessment', {}).get('monolithic_threshold', 0.8)
                 partially_modular_threshold = self.config.get('analysis', {}).get('modularity_assessment', {}).get('partially_modular_threshold', 0.5)
                 
-                if avg_similarity >= monolithic_threshold:
-                    assessment = "MONOLITHIC"
-                elif avg_similarity >= partially_modular_threshold:
-                    assessment = "PARTIALLY MODULAR"
-                else:
-                    assessment = "MODULAR"
+                modularity_assessment = assess_modularity_with_statistics(
+                    similarity_values,
+                    monolithic_threshold,
+                    partially_modular_threshold
+                )
+                
+                avg_similarity = modularity_assessment['average_similarity']
+                assessment = modularity_assessment['assessment']
+                confidence = modularity_assessment['assessment_confidence']
+                stats_result = modularity_assessment['statistics']
                 
                 print(f"    Average similarity: {avg_similarity:.3f}")
-                print(f"    Assessment: {assessment}")
+                print(f"    Assessment: {assessment} (confidence: {confidence})")
+                if stats_result and stats_result['significant']:
+                    print(f"    Statistical significance: p={stats_result['p_value']:.4f} (significant)")
+                elif stats_result:
+                    print(f"    Statistical significance: p={stats_result['p_value']:.4f} (not significant)")
                 
                 # Store results for final report
                 self.comparison_results[model_name] = {
@@ -212,6 +264,8 @@ class RefusalCircuitAnalyzer:
                     'similarity_matrix': similarity_matrix,
                     'average_similarity': avg_similarity,
                     'assessment': assessment,
+                    'assessment_confidence': confidence,
+                    'statistics': stats_result,
                     'categories': list(model_circuits.keys())
                 }
                 
@@ -224,6 +278,9 @@ class RefusalCircuitAnalyzer:
                                          for k, v in similarity_matrix.items()},
                     'average_similarity': float(avg_similarity),
                     'assessment': assessment,
+                    'assessment_confidence': confidence,
+                    'statistics': {k: float(v) if isinstance(v, (int, float)) else v 
+                                 for k, v in (stats_result.items() if stats_result else {})},
                     'categories': list(model_circuits.keys())
                 }
                 
@@ -263,11 +320,26 @@ class RefusalCircuitAnalyzer:
             # Visualize each circuit
             for category, circuit in model_circuits.items():
                 try:
+                    # Create importance plots
                     fig = CircuitVisualizer.plot_circuit(circuit, top_k_nodes=30, top_k_edges=50)
                     fig_path = viz_dir / f"{safe_model_name}_{category}_circuit.png"
                     fig.savefig(fig_path, dpi=150, bbox_inches='tight')
                     plt.close(fig)
-                    print(f"    Saved visualization: {fig_path}")
+                    print(f"    Saved importance plot: {fig_path}")
+                    
+                    # Create network plot for smaller circuits
+                    if len(circuit.nodes) <= 100:  # Only for manageable sizes
+                        try:
+                            network_fig = CircuitVisualizer.create_network_plot(
+                                circuit, top_k_nodes=20, top_k_edges=30
+                            )
+                            network_path = viz_dir / f"{safe_model_name}_{category}_network.png"
+                            network_fig.savefig(network_path, dpi=150, bbox_inches='tight')
+                            plt.close(network_fig)
+                            print(f"    Saved network plot: {network_path}")
+                        except Exception as e:
+                            print(f"    Warning: Could not create network plot: {e}")
+                    
                 except Exception as e:
                     print(f"    Error creating visualization for {category}: {e}")
         
@@ -299,13 +371,35 @@ class RefusalCircuitAnalyzer:
             
             # Circuit statistics per category
             for category, circuit in model_circuits.items():
+                # Load activations for faithfulness/completeness computation
+                safe_model_name = model_name.replace('/', '-').replace(' ', '_')
+                activation_file = self.result_dir / 'activations' / f"{safe_model_name}_{category}_activations.pt"
+                
+                faithfulness = 0.0
+                completeness = 0.0
+                
+                if activation_file.exists():
+                    try:
+                        activations = torch.load(activation_file, map_location='cpu')
+                        refusal_file = self.result_dir / 'refusal_labels' / f"{safe_model_name}_{category}_refusal.json"
+                        if refusal_file.exists():
+                            with open(refusal_file, 'r') as f:
+                                refusal_labels = json.load(f)
+                            
+                            faithfulness = circuit.compute_faithfulness(activations, refusal_labels)
+                            completeness = circuit.compute_completeness(activations, refusal_labels)
+                    except Exception as e:
+                        print(f"    Warning: Could not compute faithfulness/completeness for {category}: {e}")
+                
                 model_report['circuit_statistics'][category] = {
                     'num_nodes': len(circuit.nodes),
                     'num_edges': len(circuit.edges),
                     'top_node_importance': max(circuit.node_importances.values()) if circuit.node_importances else 0.0,
                     'avg_node_importance': sum(circuit.node_importances.values()) / len(circuit.node_importances) if circuit.node_importances else 0.0,
                     'top_edge_importance': max(circuit.edge_importances.values()) if circuit.edge_importances else 0.0,
-                    'avg_edge_importance': sum(circuit.edge_importances.values()) / len(circuit.edge_importances) if circuit.edge_importances else 0.0
+                    'avg_edge_importance': sum(circuit.edge_importances.values()) / len(circuit.edge_importances) if circuit.edge_importances else 0.0,
+                    'faithfulness': faithfulness,
+                    'completeness': completeness
                 }
             
             # Add comparison results if available
@@ -314,7 +408,10 @@ class RefusalCircuitAnalyzer:
                 model_report['comparison'] = {
                     'average_similarity': float(comp['average_similarity']),
                     'assessment': comp['assessment'],
-                    'pairwise_similarities': {k: float(v) for k, v in comp['similarities'].items()}
+                    'assessment_confidence': comp.get('assessment_confidence', 'UNKNOWN'),
+                    'pairwise_similarities': {k: float(v) for k, v in comp['similarities'].items()},
+                    'statistics': {k: float(v) if isinstance(v, (int, float)) else v 
+                                 for k, v in (comp.get('statistics', {}).items() if comp.get('statistics') else {})}
                 }
             
             report['models'][model_name] = model_report
@@ -361,6 +458,13 @@ class RefusalCircuitAnalyzer:
                     f.write(f"\nComparison Results:\n")
                     f.write(f"  Average Similarity: {comp['average_similarity']:.4f}\n")
                     f.write(f"  Assessment: {comp['assessment']}\n")
+                    f.write(f"  Confidence: {comp.get('assessment_confidence', 'UNKNOWN')}\n")
+                    if 'statistics' in comp and comp['statistics']:
+                        stats = comp['statistics']
+                        f.write(f"  Statistical Test:\n")
+                        f.write(f"    p-value: {stats.get('p_value', 'N/A'):.4f}\n")
+                        f.write(f"    Significant: {stats.get('significant', False)}\n")
+                        f.write(f"    95% CI: [{stats.get('confidence_interval_95', (0, 0))[0]:.4f}, {stats.get('confidence_interval_95', (0, 0))[1]:.4f}]\n")
                     f.write(f"  Pairwise Similarities:\n")
                     for pair, sim in comp['pairwise_similarities'].items():
                         f.write(f"    {pair}: {sim:.4f}\n")
@@ -368,6 +472,34 @@ class RefusalCircuitAnalyzer:
                 f.write("\n")
             
             f.write("=" * 80 + "\n")
+            f.write("CONCLUSIONS\n")
+            f.write("=" * 80 + "\n")
+            
+            # Generate conclusions
+            for model_name, model_data in report['models'].items():
+                if 'comparison' in model_data:
+                    comp = model_data['comparison']
+                    assessment = comp['assessment']
+                    confidence = comp.get('assessment_confidence', 'UNKNOWN')
+                    avg_sim = comp['average_similarity']
+                    
+                    f.write(f"\n{model_name}:\n")
+                    if assessment == "MONOLITHIC":
+                        f.write(f"  The model shows MONOLITHIC refusal behavior (similarity: {avg_sim:.3f}).\n")
+                        f.write(f"  This suggests shared circuits across refusal categories.\n")
+                    elif assessment == "MODULAR":
+                        f.write(f"  The model shows MODULAR refusal behavior (similarity: {avg_sim:.3f}).\n")
+                        f.write(f"  This suggests category-specific circuits for different refusal types.\n")
+                    else:
+                        f.write(f"  The model shows PARTIALLY MODULAR refusal behavior (similarity: {avg_sim:.3f}).\n")
+                        f.write(f"  This suggests a mix of shared and category-specific circuits.\n")
+                    
+                    if confidence == "HIGH":
+                        f.write(f"  This assessment is statistically significant (p < 0.05).\n")
+                    else:
+                        f.write(f"  Note: This assessment has low statistical confidence.\n")
+            
+            f.write("\n" + "=" * 80 + "\n")
             f.write("END OF REPORT\n")
             f.write("=" * 80 + "\n")
         

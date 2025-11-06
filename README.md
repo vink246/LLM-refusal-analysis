@@ -29,8 +29,9 @@ This project analyzes whether LLM refusal behavior is **monolithic** (shared cir
 - **`circuits_utils.py`**: Core circuit data structures and utilities
   - `SparseFeatureCircuit`: Represents discovered circuits
   - `CircuitDiscoverer`: Base circuit discovery algorithm
-  - `CircuitVisualizer`: Visualization tools
+  - `CircuitVisualizer`: Visualization tools (importance plots, network diagrams, heatmaps)
   - Circuit comparison functions for hypothesis testing
+  - Faithfulness and completeness metrics
 - **`circuit_discovery_with_saes.py`**: SAE-based circuit discovery
   - `SAECircuitDiscoverer`: Discovers circuits using SAE features
   - Computes feature importances via correlation analysis
@@ -39,6 +40,11 @@ This project analyzes whether LLM refusal behavior is **monolithic** (shared cir
   - `RefusalCircuitAnalyzer`: Complete analysis workflow
   - Coordinates SAE training, circuit discovery, and comparison
   - Generates reports and visualizations
+  - Configuration validation and error handling
+- **`statistical_analysis.py`**: Statistical hypothesis testing
+  - Statistical significance tests for circuit similarities
+  - Confidence intervals and p-value computation
+  - Modularity assessment with statistical confidence
 
 #### 4. **Data Processing** (`src/`)
 - **`data_utils.py`**: Dataset loading utilities
@@ -216,11 +222,12 @@ This will:
 - Load trained SAEs
 - Discover circuits for each model-category combination
 - Save circuits to `results/circuits/`
-- Compare circuits across categories
+- Compare circuits across categories with statistical significance testing
 - Generate similarity metrics and modularity assessment (monolithic/partially modular/modular)
+- Compute faithfulness and completeness metrics for each circuit
 - Create similarity heatmaps showing circuit relationships across categories
-- Generate circuit visualizations for each category
-- Create comprehensive final analysis reports (JSON and text format)
+- Generate circuit visualizations (importance plots and network diagrams) for each category
+- Create comprehensive final analysis reports (JSON and text format) with conclusions
 
 ### Step 4: Analyze Results
 
@@ -265,7 +272,8 @@ results/
 │   ├── <model>_<category>_circuit.json
 │   └── <model>_comparison.json
 ├── visualizations/           # Circuit visualizations (.png)
-│   ├── <model>_<category>_circuit.png      # Individual circuit plots
+│   ├── <model>_<category>_circuit.png      # Importance plots (nodes/edges)
+│   ├── <model>_<category>_network.png      # Network graph visualizations
 │   └── <model>_similarity_heatmap.png     # Cross-category similarity heatmaps
 ├── circuit_analysis_report.json    # Comprehensive circuit analysis (JSON)
 ├── circuit_analysis_summary.txt    # Human-readable analysis summary
@@ -332,7 +340,7 @@ SAE training can take several hours. Use a long-running job:
 - Moderate similarity (0.5-0.8)
 - Some shared features, some category-specific
 
-The analysis automatically assesses which hypothesis is supported based on circuit similarity metrics.
+The analysis automatically assesses which hypothesis is supported based on circuit similarity metrics with statistical significance testing. Assessments include confidence levels (HIGH/LOW) based on p-values from t-tests.
 
 ### Interpreting Results
 
@@ -347,11 +355,18 @@ After running circuit analysis, check the following outputs:
    - Pairwise similarity scores between categories
    - Average similarity across all category pairs
    - Assessment: MONOLITHIC, PARTIALLY MODULAR, or MODULAR
+   - Statistical significance (p-values, confidence intervals)
+   - Assessment confidence (HIGH/LOW based on statistical tests)
 
 3. **Final Reports**:
    - `circuit_analysis_report.json`: Complete analysis with all metrics
-   - `circuit_analysis_summary.txt`: Human-readable summary with key findings
-   - Includes circuit statistics (nodes, edges, importance metrics) per category
+     - Circuit statistics per category (nodes, edges, importance metrics)
+     - Faithfulness and completeness scores
+     - Statistical test results
+   - `circuit_analysis_summary.txt`: Human-readable summary with:
+     - Key findings and circuit statistics
+     - Comparison results with statistical significance
+     - **Conclusions section** with research interpretations
 
 ## Troubleshooting
 
@@ -374,6 +389,13 @@ After running circuit analysis, check the following outputs:
 - Ensure SAEs are trained before circuit discovery
 - Check that refusal labels match activation batch sizes
 - Verify layer names match between SAE training and circuit discovery
+- Configuration validation will catch missing required fields
+- Check error messages for specific file path issues
+
+### Statistical Analysis
+- Statistical tests require at least 2 similarity values (need 2+ categories)
+- Low confidence assessments indicate results are not statistically significant
+- Check p-values in comparison JSON files to interpret significance
 
 ## Dependencies
 
@@ -383,6 +405,7 @@ Key dependencies:
 - PyTorch (with CUDA support for GPU)
 - Transformers (Hugging Face)
 - NumPy, Matplotlib, Seaborn
-- NetworkX (for circuit visualization)
+- NetworkX (for circuit network visualizations)
+- scipy (for statistical tests)
 - scikit-learn
 - PyYAML

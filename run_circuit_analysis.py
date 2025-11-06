@@ -67,8 +67,29 @@ Example usage on PACE ICE:
         config_path = args.config
     
     try:
+        # Validate config file exists
+        if not os.path.exists(config_path):
+            print(f"Error: Configuration file not found: {config_path}")
+            sys.exit(1)
+        
         analyzer = RefusalCircuitAnalyzer(config_path)
         analyzer.run_analysis()
+        
+        print("\n" + "=" * 80)
+        print("Pipeline completed successfully!")
+        print("=" * 80)
+        print(f"\nResults saved to: {analyzer.result_dir}")
+        print(f"  - Circuits: {analyzer.result_dir / 'circuits'}")
+        print(f"  - Visualizations: {analyzer.result_dir / 'visualizations'}")
+        print(f"  - Reports: {analyzer.result_dir / 'circuit_analysis_report.json'}")
+        print(f"  - Summary: {analyzer.result_dir / 'circuit_analysis_summary.txt'}")
+        
+    except FileNotFoundError as e:
+        print(f"Error: File not found - {e}")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"Error: Invalid configuration - {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"Error running circuit analysis: {e}")
         import traceback
