@@ -79,7 +79,6 @@ class SAECircuitDiscoverer(CircuitDiscoverer):
                                        metric_type: str) -> Dict[str, torch.Tensor]:
         """Compute importance of SAE features"""
         
-        refusal_labels_tensor = torch.tensor(refusal_labels, dtype=torch.float32)
         importances = {}
         
         for layer, features in encoded_activations.items():
@@ -89,9 +88,12 @@ class SAECircuitDiscoverer(CircuitDiscoverer):
                 # Average over sequence dimension
                 features = features.mean(dim=1)
             
+            # Move refusal labels to the same device as features
+            refusal_labels_tensor = torch.tensor(refusal_labels, dtype=torch.float32, device=features.device)
+            
             # Compute correlation with refusal labels
             batch_size, hidden_dim = features.shape
-            layer_importance = torch.zeros(hidden_dim)
+            layer_importance = torch.zeros(hidden_dim, device=features.device)
             
             for feature_idx in range(hidden_dim):
                 feature_vals = features[:, feature_idx]
@@ -106,7 +108,11 @@ class SAECircuitDiscoverer(CircuitDiscoverer):
                     ]))
                     correlation = correlation_matrix[0, 1] if not torch.isnan(correlation_matrix[0, 1]) else 0.0
                 
-                layer_importance[feature_idx] = torch.abs(correlation)
+                # Convert correlation to tensor if it's a scalar, then take absolute value
+                if isinstance(correlation, float):
+                    layer_importance[feature_idx] = abs(correlation)
+                else:
+                    layer_importance[feature_idx] = torch.abs(correlation)
             
             importances[layer] = layer_importance
         

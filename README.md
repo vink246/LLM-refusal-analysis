@@ -6,8 +6,10 @@ Class project for Georgia Tech's CS 4650: investigating monolith vs modular refu
 This project analyzes whether LLM refusal behavior is **monolithic** (shared circuits across categories) or **modular** (category-specific circuits) by:
 1. Collecting model activations on OR-Bench dataset
 2. Training Sparse Autoencoders (SAEs) to decompose activations into interpretable features
-3. Discovering sparse feature circuits for each refusal category
-4. Comparing circuits across categories to test the hypothesis
+3. Discovering sparse feature circuits for each refusal category using SAE-encoded features
+4. Comparing circuits across categories with statistical significance testing
+
+**Current Status**: The pipeline supports Llama-2 and Mistral models with a focus on Mistral for circuit discovery due to SAE training stability issues with Llama-2.
 
 ## Project Components
 
@@ -27,20 +29,21 @@ This project analyzes whether LLM refusal behavior is **monolithic** (shared cir
 
 #### 3. **Circuit Discovery** (`circuits/`)
 - **`circuits_utils.py`**: Core circuit data structures and utilities
-  - `SparseFeatureCircuit`: Represents discovered circuits
-  - `CircuitDiscoverer`: Base circuit discovery algorithm
+  - `SparseFeatureCircuit`: Represents discovered circuits with nodes, edges, and importance scores
+  - `CircuitDiscoverer`: Base circuit discovery algorithm 
   - `CircuitVisualizer`: Visualization tools (importance plots, network diagrams, heatmaps)
-  - Circuit comparison functions for hypothesis testing
-  - Faithfulness and completeness metrics
+  - `compare_circuits_across_categories`: Cross-category similarity computation
+  - Faithfulness and completeness metrics for circuit evaluation
 - **`circuit_discovery_with_saes.py`**: SAE-based circuit discovery
-  - `SAECircuitDiscoverer`: Discovers circuits using SAE features
-  - Computes feature importances via correlation analysis
-  - Identifies important nodes and edges in circuits
-- **`refusal_circuit_analyzer.py`**: Main orchestrator
-  - `RefusalCircuitAnalyzer`: Complete analysis workflow
-  - Coordinates SAE training, circuit discovery, and comparison
-  - Generates reports and visualizations
-  - Configuration validation and error handling
+  - `SAECircuitDiscoverer`: Discovers circuits using trained SAE features and correlation analysis
+  - Loads pre-computed activations and encodes them with trained SAEs
+  - Computes feature importances via correlation with refusal labels
+  - Builds circuit graphs with SAE features as nodes
+- **`refusal_circuit_analyzer.py`**: Main orchestrator class
+  - `RefusalCircuitAnalyzer`: Complete analysis workflow coordinator
+  - Manages SAE training via `SAEManager`, circuit discovery, and cross-category comparison
+  - Generates comprehensive reports, visualizations, and statistical assessments
+  - Configuration validation and organized output directory structure
 - **`statistical_analysis.py`**: Statistical hypothesis testing
   - Statistical significance tests for circuit similarities
   - Confidence intervals and p-value computation
@@ -116,7 +119,7 @@ conda install jupyterlab -y
 If you created the environment from scratch, use the requirements.txt file:
 
 ```bash
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 #### 5. Verify Installation
@@ -162,7 +165,7 @@ huggingface-cli login
 
 #### 2. Set a scratch folder for model downloads
 ```bash
-export HF_HOME=/home/hice1/vkulkarni46/scratch/huggingface
+export HF_HOME=/home/hice1/<gt_username>/scratch/huggingface
 ```
 
 #### 3. Download LLaMA-2-7B-Chat
@@ -193,6 +196,8 @@ This will:
 
 **Note**: This step requires GPU access. Use a PACE ICE GPU node or submit as a job.
 
+**Current Configuration**: The default `orbench_run.yaml` is configured for 2 categories (violence, deception) and 100 samples per category. To analyze all 10 categories, update the configuration file or use one of the alternative configs like `circuit_discovery.yaml`.
+
 ### Step 2: Train Sparse Autoencoders
 
 Train SAEs on the collected activations:
@@ -204,11 +209,14 @@ python run_circuit_analysis.py --config configurations/sae_training.yaml --train
 Or modify `configurations/sae_training.yaml` to set `train_saes: true`.
 
 This will:
-- Load activation files for each model
-- Train separate SAEs for each specified layer
-- Save trained SAEs to `results/saes/`
+- Load activation files for each model and category combination
+- Train separate SAEs for each specified layer using the `SAEManager` class
+- Use correlation-based feature importance computation for circuit discovery
+- Save trained SAEs with training history to `results/saes/<model_name>/`
 
-**Note**: SAE training is computationally intensive. Use GPU nodes and consider running as a batch job.
+**Note**: SAE training is computationally intensive and may require significant GPU memory. Use GPU nodes and consider running as a batch job. The SAE training integrates with the circuit discovery pipeline through the `SAECircuitDiscoverer` class.
+
+**Performance Note**: On high-end GPUs like H200, SAE training may complete very quickly due to the small default dataset (100 samples per category in `orbench_run.yaml`). If training completes in seconds, verify that: (1) activation files were found and loaded, (2) you see progress bars for multiple epochs and batches, and (3) SAE files are saved to `results/saes/<model_name>/`. For more thorough training, increase `sae_max_samples` or use the full 10-category configuration in `circuit_discovery.yaml`.
 
 ### Step 3: Discover Circuits
 
@@ -242,9 +250,10 @@ This generates comprehensive evaluation metrics and reports.
 ## Configuration Files
 
 ### `configurations/orbench_run.yaml`
-- Dataset and model settings
-- Activation layer specifications
-- Inference parameters
+- Dataset path and OR-Bench categories (currently configured for 2 categories: violence, deception)
+- Model specifications (Llama-2-7b-chat-hf, Mistral-7B-Instruct-v0.1)
+- Activation layer specifications (residuals_10, residuals_15, mlp_11)
+- Batch size and device settings
 
 ### `configurations/sae_training.yaml`
 - SAE training hyperparameters
@@ -252,32 +261,41 @@ This generates comprehensive evaluation metrics and reports.
 - Training settings (epochs, batch size, etc.)
 
 ### `configurations/circuit_discovery.yaml`
-- Circuit discovery parameters
-- Node and edge thresholds
-- Comparison and visualization settings
+- Circuit discovery parameters (node_threshold: 0.1, edge_threshold: 0.01)
+- Model selection (currently configured for Mistral only)
+- All 10 categories: deception, harassment, harmful, hate, illegal, privacy, self-harm, sexual, unethical, violence
+- Visualization and statistical analysis settings
 
 ## Output Structure
 
 ```
 results/
 ├── activations/              # Model activations (.pt files)
+│   └── <safe_model_name>_<category>_activations.pt
 ├── refusal_labels/           # Ground truth refusal labels (.json)
+│   └── <safe_model_name>_<category>_refusal.json
 ├── model_outputs/            # Model responses (.json)
+│   └── <safe_model_name>_<category>_outputs.json
 ├── evaluation_results/       # Evaluation data (.json)
+│   └── <safe_model_name>_<category>_evaluation.json
 ├── saes/                     # Trained SAEs (.pt files)
 │   └── <model_name>/
 │       ├── <layer>_sae.pt
 │       └── <layer>_training_history.json
 ├── circuits/                 # Discovered circuits (.json)
-│   ├── <model>_<category>_circuit.json
-│   └── <model>_comparison.json
+│   ├── <safe_model_name>_<category>_circuit.json
+│   └── <safe_model_name>_comparison.json
 ├── visualizations/           # Circuit visualizations (.png)
-│   ├── <model>_<category>_circuit.png      # Importance plots (nodes/edges)
-│   ├── <model>_<category>_network.png      # Network graph visualizations
-│   └── <model>_similarity_heatmap.png     # Cross-category similarity heatmaps
+│   └── <model_folder>/
+│       ├── circuit_importance/
+│       │   └── <category>_circuit_importance.png
+│       ├── network_diagrams/
+│       │   └── <category>_network_diagram.png
+│       └── similarity_heatmaps/
+│           └── <model_folder>_similarity_heatmap.png
 ├── circuit_analysis_report.json    # Comprehensive circuit analysis (JSON)
 ├── circuit_analysis_summary.txt    # Human-readable analysis summary
-└── analysis_results.json    # Inference evaluation report
+└── analysis_results.json    # Inference evaluation report (from run_analysis.py)
 ```
 
 ## Running on PACE ICE
@@ -340,7 +358,7 @@ SAE training can take several hours. Use a long-running job:
 - Moderate similarity (0.5-0.8)
 - Some shared features, some category-specific
 
-The analysis automatically assesses which hypothesis is supported based on circuit similarity metrics with statistical significance testing. Assessments include confidence levels (HIGH/LOW) based on p-values from t-tests.
+The analysis automatically assesses which hypothesis is supported based on circuit similarity metrics with statistical significance testing via the `statistical_analysis.py` module. Assessments include confidence levels (HIGH/LOW) based on p-values from t-tests, implemented through the `assess_modularity_with_statistics` function.
 
 ### Interpreting Results
 
@@ -376,21 +394,25 @@ After running circuit analysis, check the following outputs:
 - Verify Python path includes project directories
 
 ### Missing Activations
-- Run inference first (`src/run_inference.py`)
+- Run inference first (`python src/run_inference.py --config configurations/orbench_run.yaml`)
 - Check that activation files exist in `results/activations/`
 - Verify model names and categories match between inference and circuit discovery
 
 ### SAE Training Issues
 - Ensure sufficient GPU memory (7B models need ~20GB+)
 - Reduce `sae_max_samples` if running out of memory
-- Check that activation files are properly formatted
+- Check that activation files are properly formatted and contain expected layers
+- Verify `SAEManager` can find activation files in correct directory structure
+- If SAE training fails, check that all specified `activation_layers` exist in activation files
 
 ### Circuit Discovery Errors
-- Ensure SAEs are trained before circuit discovery
+- Ensure SAEs are trained before circuit discovery (check `results/saes/<model_name>/` exists)
 - Check that refusal labels match activation batch sizes
-- Verify layer names match between SAE training and circuit discovery
-- Configuration validation will catch missing required fields
-- Check error messages for specific file path issues
+- Verify layer names match between SAE training and circuit discovery configurations
+- For missing activation files, ensure inference was run first for all categories
+- Configuration validation will catch missing required fields (`models`, `categories`, `activation_layers`)
+- If getting empty circuits, try lowering `node_threshold` and `edge_threshold` values
+- Check error messages for specific file path issues and SAE loading failures
 
 ### Statistical Analysis
 - Statistical tests require at least 2 similarity values (need 2+ categories)

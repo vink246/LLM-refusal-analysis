@@ -115,6 +115,14 @@ class RefusalCircuitAnalyzer:
                 epochs=self.config.get('sae_epochs', 100)
             )
     
+    def _get_model_folder_name(self, model_name: str) -> str:
+        """Convert model name to organized folder name"""
+        model_mapping = {
+            "meta-llama/Llama-2-7b-chat-hf": "llama-2-7b-chat-hf",
+            "mistralai/Mistral-7B-Instruct-v0.1": "mistral-7b-instruct-v0.1"
+        }
+        return model_mapping.get(model_name, model_name.replace('/', '-').replace(' ', '_').lower())
+    
     def _discover_circuits_for_model(self, model_name: str):
         """Discover circuits for all categories of a model"""
         # Validate activation files exist
@@ -271,6 +279,22 @@ class RefusalCircuitAnalyzer:
                 
                 # Save comparison results
                 comparison_file = self.result_dir / "circuits" / f"{model_name.replace('/', '-')}_comparison.json"
+                def json_serializable(obj):
+                    """Convert numpy types and other non-JSON types to JSON-serializable types"""
+                    import numpy as np
+                    if isinstance(obj, np.bool_):
+                        return bool(obj)
+                    elif isinstance(obj, (np.integer, np.floating)):
+                        return float(obj)
+                    elif isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    elif isinstance(obj, dict):
+                        return {k: json_serializable(v) for k, v in obj.items()}
+                    elif isinstance(obj, list):
+                        return [json_serializable(v) for v in obj]
+                    else:
+                        return obj
+                
                 comparison_data = {
                     'model_name': model_name,
                     'similarities': {k: float(v) for k, v in similarities.items()},
@@ -279,8 +303,7 @@ class RefusalCircuitAnalyzer:
                     'average_similarity': float(avg_similarity),
                     'assessment': assessment,
                     'assessment_confidence': confidence,
-                    'statistics': {k: float(v) if isinstance(v, (int, float)) else v 
-                                 for k, v in (stats_result.items() if stats_result else {})},
+                    'statistics': json_serializable(stats_result) if stats_result else {},
                     'categories': list(model_circuits.keys())
                 }
                 
@@ -293,11 +316,18 @@ class RefusalCircuitAnalyzer:
                     viz_dir.mkdir(exist_ok=True)
                     safe_model_name = model_name.replace('/', '-').replace(' ', '_')
                     
+                    # Create organized folder structure
+                    model_folder = self._get_model_folder_name(model_name)
+                    model_viz_dir = viz_dir / model_folder
+                    model_viz_dir.mkdir(exist_ok=True)
+                    heatmap_dir = model_viz_dir / "similarity_heatmaps"
+                    heatmap_dir.mkdir(exist_ok=True)
+                    
                     fig = CircuitVisualizer.create_similarity_heatmap(
                         similarity_matrix,
                         title=f"Circuit Similarity: {model_name}"
                     )
-                    heatmap_path = viz_dir / f"{safe_model_name}_similarity_heatmap.png"
+                    heatmap_path = heatmap_dir / f"{model_folder}_similarity_heatmap.png"
                     fig.savefig(heatmap_path, dpi=150, bbox_inches='tight')
                     plt.close(fig)
                     print(f"    Saved similarity heatmap: {heatmap_path}")
@@ -317,28 +347,48 @@ class RefusalCircuitAnalyzer:
             
             safe_model_name = model_name.replace('/', '-').replace(' ', '_')
             
+            # Create organized folder structure
+            model_folder = self._get_model_folder_name(model_name)
+            model_viz_dir = viz_dir / model_folder
+            model_viz_dir.mkdir(exist_ok=True)
+            circuit_dir = model_viz_dir / "circuit_importance"
+            circuit_dir.mkdir(exist_ok=True)
+            network_dir = model_viz_dir / "network_diagrams"
+            network_dir.mkdir(exist_ok=True)
+            
             # Visualize each circuit
             for category, circuit in model_circuits.items():
                 try:
                     # Create importance plots
                     fig = CircuitVisualizer.plot_circuit(circuit, top_k_nodes=30, top_k_edges=50)
-                    fig_path = viz_dir / f"{safe_model_name}_{category}_circuit.png"
+                    fig_path = circuit_dir / f"{category}_circuit.png"
                     fig.savefig(fig_path, dpi=150, bbox_inches='tight')
                     plt.close(fig)
                     print(f"    Saved importance plot: {fig_path}")
                     
-                    # Create network plot for smaller circuits
-                    if len(circuit.nodes) <= 100:  # Only for manageable sizes
-                        try:
-                            network_fig = CircuitVisualizer.create_network_plot(
-                                circuit, top_k_nodes=20, top_k_edges=30
-                            )
-                            network_path = viz_dir / f"{safe_model_name}_{category}_network.png"
-                            network_fig.savefig(network_path, dpi=150, bbox_inches='tight')
-                            plt.close(network_fig)
-                            print(f"    Saved network plot: {network_path}")
-                        except Exception as e:
-                            print(f"    Warning: Could not create network plot: {e}")
+                    # Create network plot with adaptive parameters based on circuit size
+                    try:
+                        # Adjust visualization parameters based on circuit size
+                        num_nodes = len(circuit.nodes)
+                        if num_nodes <= 100:
+                            # Small circuits: show more detail
+                            top_k_nodes, top_k_edges = 20, 30
+                        elif num_nodes <= 1000:
+                            # Medium circuits: moderate detail
+                            top_k_nodes, top_k_edges = 30, 40
+                        else:
+                            # Large circuits: focus on most important elements
+                            top_k_nodes, top_k_edges = 50, 60
+                            
+                        network_fig = CircuitVisualizer.create_network_plot(
+                            circuit, top_k_nodes=top_k_nodes, top_k_edges=top_k_edges
+                        )
+                        network_path = network_dir / f"{category}_network.png"
+                        network_fig.savefig(network_path, dpi=150, bbox_inches='tight')
+                        plt.close(network_fig)
+                        print(f"    Saved network plot: {network_path} ({num_nodes:,} total nodes, showing top {top_k_nodes})")
+                    except Exception as e:
+                        print(f"    Warning: Could not create network plot for {category}: {e}")
                     
                 except Exception as e:
                     print(f"    Error creating visualization for {category}: {e}")
@@ -416,10 +466,26 @@ class RefusalCircuitAnalyzer:
             
             report['models'][model_name] = model_report
         
-        # Save report
+        # Save report with JSON serialization helper
+        def json_serializable(obj):
+            """Convert numpy types and other non-JSON types to JSON-serializable types"""
+            import numpy as np
+            if isinstance(obj, np.bool_):
+                return bool(obj)
+            elif isinstance(obj, (np.integer, np.floating)):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, dict):
+                return {k: json_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [json_serializable(v) for v in obj]
+            else:
+                return obj
+        
         report_file = self.result_dir / "circuit_analysis_report.json"
         with open(report_file, 'w') as f:
-            json.dump(report, f, indent=2)
+            json.dump(json_serializable(report), f, indent=2)
         
         # Generate text summary
         self._generate_text_summary(report)

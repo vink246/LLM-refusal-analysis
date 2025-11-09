@@ -17,51 +17,77 @@ import json
 
 class SparseAutoencoder(nn.Module):
     """
-    Sparse Autoencoder for feature decomposition
-    Based on the architecture from the sparse feature circuits paper
+    Sparse Autoencoder with Top-K sparsity for guaranteed sparse features
+    This ensures sparsity regardless of training dynamics
     """
     
-    def __init__(self, input_dim: int, hidden_dim: int, sparsity_coeff: float = 0.01):
+    def __init__(self, input_dim: int, hidden_dim: int, sparsity_coeff: float = 0.01, k_percent: float = 0.05):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.sparsity_coeff = sparsity_coeff
+        self.k_percent = k_percent
+        self.k = max(1, int(hidden_dim * k_percent))  # Number of features to keep active
         
         # Encoder
         self.encoder = nn.Linear(input_dim, hidden_dim, bias=True)
         # Decoder  
         self.decoder = nn.Linear(hidden_dim, input_dim, bias=True)
         
-        # Initialize decoder weights to be a transpose of encoder (common in SAEs)
+        # Initialize weights for better sparsity
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """Initialize weights to promote sparsity"""
         with torch.no_grad():
+            # Initialize encoder with smaller weights to prevent saturation
+            nn.init.xavier_uniform_(self.encoder.weight, gain=0.1)
+            nn.init.zeros_(self.encoder.bias)
+            
+            # Initialize decoder as transpose of encoder (tied weights approach)
             self.decoder.weight.data = self.encoder.weight.data.T.clone()
+            nn.init.zeros_(self.decoder.bias)
+    
+    def top_k_sparse_activation(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply top-k sparsity - only keep top k activations per sample"""
+        # Get the top-k indices
+        topk_vals, topk_indices = torch.topk(x, self.k, dim=-1)
+        
+        # Create sparse activation tensor
+        sparse_activation = torch.zeros_like(x)
+        sparse_activation.scatter_(-1, topk_indices, topk_vals)
+        
+        return sparse_activation
         
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Forward pass of the sparse autoencoder
+        Forward pass with guaranteed top-k sparsity
         
         Returns:
             reconstructed: Reconstructed input
-            features: Sparse feature activations
-            loss: Total loss (reconstruction + sparsity)
+            features: Sparse feature activations (guaranteed sparse)
+            loss: Reconstruction loss (sparsity enforced structurally)
         """
-        # Encode with ReLU for sparsity
-        features = F.relu(self.encoder(x))
+        # Encode
+        pre_activation = self.encoder(x)
+        
+        # Apply ReLU then top-k sparsity for guaranteed sparsity
+        relu_features = F.relu(pre_activation)
+        features = self.top_k_sparse_activation(relu_features)
         
         # Decode
         reconstructed = self.decoder(features)
         
-        # Compute losses
+        # Loss is just reconstruction (sparsity is enforced structurally)
         reconstruction_loss = F.mse_loss(reconstructed, x, reduction='mean')
-        sparsity_loss = self.sparsity_coeff * features.norm(p=1, dim=-1).mean()
         
-        total_loss = reconstruction_loss + sparsity_loss
-        
-        return reconstructed, features, total_loss
+        return reconstructed, features, reconstruction_loss
     
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """Encode input to sparse features"""
-        return F.relu(self.encoder(x))
+        pre_activation = self.encoder(x)
+        relu_features = F.relu(pre_activation)
+        return self.top_k_sparse_activation(relu_features)
     
     def decode(self, features: torch.Tensor) -> torch.Tensor:
         """Decode features to reconstruction"""
@@ -80,7 +106,7 @@ class ActivationDataset(Dataset):
                 try:
                     data = torch.load(file_path)
                     if layer in data:
-                        layer_activations = data[layer]
+                        layer_activations = data[layer].float()  # Ensure float32 dtype
                         # Flatten spatial dimensions if needed
                         if layer_activations.dim() > 2:
                             layer_activations = layer_activations.view(layer_activations.size(0), -1)
@@ -112,11 +138,12 @@ class SAETrainer:
                  input_dim: int,
                  hidden_dim: int,
                  sparsity_coeff: float = 0.01,
+                 k_percent: float = 0.05,
                  lr: float = 1e-3,
                  device: str = "cuda"):
         
         self.device = device
-        self.sae = SparseAutoencoder(input_dim, hidden_dim, sparsity_coeff).to(device)
+        self.sae = SparseAutoencoder(input_dim, hidden_dim, sparsity_coeff, k_percent).to(device)
         self.optimizer = torch.optim.Adam(self.sae.parameters(), lr=lr)
         self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', patience=5, factor=0.5
@@ -142,16 +169,19 @@ class SAETrainer:
             num_batches = 0
             
             for batch in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
-                batch = batch.to(self.device)
+                batch = batch.to(self.device).float()  # Ensure float32 dtype
                 
                 self.optimizer.zero_grad()
                 
-                reconstructed, features, total_loss = self.sae(batch)
+                reconstructed, features, reconstruction_loss = self.sae(batch)
+                
+                # The loss is now just reconstruction loss (sparsity enforced structurally)
+                total_loss = reconstruction_loss
                 
                 # Compute additional metrics
                 with torch.no_grad():
-                    reconstruction_loss = F.mse_loss(reconstructed, batch)
-                    sparsity_loss = self.sae.sparsity_coeff * features.norm(p=1, dim=-1).mean()
+                    # Sparsity is enforced by top-k, so this is just for logging
+                    sparsity_loss = torch.tensor(0.0)  # No explicit sparsity loss
                     l0_norm = (features > 0).float().sum(dim=-1).mean()
                 
                 total_loss.backward()
@@ -193,7 +223,8 @@ class SAETrainer:
             'model_state_dict': self.sae.state_dict(),
             'input_dim': self.sae.input_dim,
             'hidden_dim': self.sae.hidden_dim,
-            'sparsity_coeff': self.sae.sparsity_coeff
+            'sparsity_coeff': self.sae.sparsity_coeff,
+            'k_percent': self.sae.k_percent
         }, filepath)
     
     @classmethod
@@ -204,6 +235,7 @@ class SAETrainer:
             input_dim=checkpoint['input_dim'],
             hidden_dim=checkpoint['hidden_dim'],
             sparsity_coeff=checkpoint['sparsity_coeff'],
+            k_percent=checkpoint.get('k_percent', 0.05),  # Default to 5% for backwards compatibility
             device=device
         )
         trainer.sae.load_state_dict(checkpoint['model_state_dict'])
@@ -225,7 +257,8 @@ class SAEManager:
                            sae_hidden_dim: int = 8192,  # 8x expansion as in paper
                            max_samples: int = 100000,
                            batch_size: int = 512,
-                           epochs: int = 100):
+                           epochs: int = 100,
+                           sparsity_coeff: float = 0.01):
         """Train SAEs for all layers of a model"""
         
         safe_model_name = model_name.replace('/', '-').replace(' ', '_')
@@ -252,11 +285,12 @@ class SAEManager:
                 input_dim = dataset.activations.shape[1]
                 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
                 
-                # Train SAE
+                # Train SAE with Top-K sparsity
                 trainer = SAETrainer(
                     input_dim=input_dim,
                     hidden_dim=sae_hidden_dim,
-                    sparsity_coeff=0.01,  # As in paper
+                    sparsity_coeff=sparsity_coeff,  # Use configurable sparsity coefficient
+                    k_percent=0.05,  # 5% sparsity (guaranteed)
                     lr=1e-3,
                     device="cuda" if torch.cuda.is_available() else "cpu"
                 )
@@ -302,6 +336,14 @@ class SAEManager:
         for layer, activation in activations.items():
             if layer in saes:
                 sae = saes[layer]
+                
+                # Get the device and dtype of the SAE model
+                sae_device = next(sae.sae.parameters()).device
+                sae_dtype = next(sae.sae.parameters()).dtype
+                
+                # Move activation to the same device and dtype as SAE
+                activation = activation.to(device=sae_device, dtype=sae_dtype)
+                
                 # Flatten if needed
                 original_shape = activation.shape
                 if activation.dim() > 2:

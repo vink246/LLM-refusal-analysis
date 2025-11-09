@@ -20,8 +20,8 @@ def prepare_orbench_data():
     dataset_dir = "datasets/or-bench"
     output_dir = "processed_orbench_data"
     
-    # Categories from the configuration file
-    categories = ["violence", "deception"]
+    # All categories from OR-bench
+    categories = ["violence", "deception", "harassment", "harmful", "hate", "illegal", "privacy", "self-harm", "sexual", "unethical"]
     samples_per_category = 100
     
     print(f"Processing OR-Bench data...")

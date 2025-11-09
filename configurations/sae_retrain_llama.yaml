@@ -1,0 +1,40 @@
+# Configuration for retraining LLaMA SAEs on current activation data
+
+# Model settings - LLaMA only for SAE retraining
+models:
+  - "meta-llama/Llama-2-7b-chat-hf"
+
+# Categories (use all available activation files)
+categories: ["deception", "harassment", "harmful", "hate", "illegal", "privacy", "self-harm", "sexual", "unethical", "violence"]
+
+# SAE Training Configuration
+train_saes: true
+
+# SAE architecture
+sae_config:
+  hidden_dim: 4096          # Match activation dimension
+  sparsity_coeff: 1e-3      # L1 sparsity regularization
+  learning_rate: 1e-4       # Learning rate for SAE training
+  batch_size: 32            # Batch size for training
+  num_epochs: 100           # Number of training epochs
+  k_percent: 0.1            # Top-k sparsity (10% active features)
+  
+# Layers to train SAEs for
+activation_layers:
+  - "residuals_10"
+  - "mlp_11" 
+  - "residuals_15"
+
+# Training data settings
+sae_max_samples: 10000      # Use more samples for better training
+shuffle_data: true
+
+# Runtime settings
+device: "cuda"
+result_dir: "results"
+
+# Overwrite existing SAEs
+overwrite_existing: true
+
+# Output settings
+save_training_history: true

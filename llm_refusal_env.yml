@@ -1,4 +1,4 @@
-name: /home/hice1/ccheah6/scratch/NLP/LLM-refusal-analysis/llm_refusal_env
+name: llm_refusal_env
 channels:
   - pytorch
   - nvidia
