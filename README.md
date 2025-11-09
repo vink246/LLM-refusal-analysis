@@ -9,7 +9,7 @@ This project analyzes whether LLM refusal behavior is **monolithic** (shared cir
 3. Discovering sparse feature circuits for each refusal category using SAE-encoded features
 4. Comparing circuits across categories with statistical significance testing
 
-**Current Status**: The pipeline supports Llama-2 and Mistral models with a focus on Mistral for circuit discovery due to SAE training stability issues with Llama-2.
+**Current Status**: The pipeline supports both Llama-2 and Mistral models. The results in this repository were generated using the LLaMA-2-7b-chat-hf model with configuration `configurations/llama_circuit_discovery.yaml`.
 
 ## Project Components
 
@@ -223,7 +223,11 @@ This will:
 Discover sparse feature circuits for each category:
 
 ```bash
-python run_circuit_analysis.py --config configurations/circuit_discovery.yaml
+# Use the configuration that generated the repository results
+python run_circuit_analysis.py --config configurations/llama_circuit_discovery.yaml
+
+# Alternative: Use Mistral configuration for comparison
+python run_circuit_analysis.py --config configurations/mistral_circuit_discovery.yaml
 ```
 
 This will:
@@ -247,24 +251,62 @@ python run_analysis.py --results-dir results
 
 This generates comprehensive evaluation metrics and reports.
 
+## Reproducing Repository Results
+
+To reproduce the exact results shown in this repository:
+
+1. **Run inference** (if activations don't exist):
+   ```bash
+   python src/run_inference.py --config configurations/orbench_run.yaml
+   ```
+
+2. **Train SAEs** (if SAEs don't exist):
+   ```bash  
+   python run_circuit_analysis.py --config configurations/sae_training.yaml --train-saes
+   ```
+
+3. **Generate circuits with the exact configuration used**:
+   ```bash
+   python run_circuit_analysis.py --config configurations/llama_circuit_discovery.yaml
+   ```
+
+This will reproduce:
+- **Model**: LLaMA-2-7b-chat-hf results
+- **Circuit sizes**: 26-84 nodes per category
+- **Assessment**: MODULAR behavior (similarity: 0.091, p < 0.05)
+- **Visualizations**: All plots in `results/visualizations/llama-2-7b-chat-hf/`
+
 ## Configuration Files
 
-### `configurations/orbench_run.yaml`
+### Primary Configuration (Used for Current Results)
+
+#### `configurations/llama_circuit_discovery.yaml` ⭐ **USED FOR REPOSITORY RESULTS**
+- **Model**: LLaMA-2-7b-chat-hf (used to generate all results in this repository)
+- **Circuit parameters**: node_threshold: 0.8, edge_threshold: 0.01 (optimized for interpretable circuits)
+- **All 10 categories**: deception, harassment, harmful, hate, illegal, privacy, self-harm, sexual, unethical, violence
+- **Produces**: 26-84 node circuits with meaningful edge connections
+- **Statistical results**: Average similarity 0.091, MODULAR assessment (HIGH confidence)
+
+### Alternative Configuration
+
+#### `configurations/mistral_circuit_discovery.yaml`
+- **Model**: Mistral-7B-Instruct-v0.1 (alternative model for comparison)
+- **Circuit parameters**: node_threshold: 0.1, edge_threshold: 0.01 (may need tuning)
+- **All 10 categories**: deception, harassment, harmful, hate, illegal, privacy, self-harm, sexual, unethical, violence
+- **Note**: Not used for current repository results
+
+### Supporting Configurations
+
+#### `configurations/orbench_run.yaml`
 - Dataset path and OR-Bench categories (currently configured for 2 categories: violence, deception)
 - Model specifications (Llama-2-7b-chat-hf, Mistral-7B-Instruct-v0.1)
 - Activation layer specifications (residuals_10, residuals_15, mlp_11)
 - Batch size and device settings
 
-### `configurations/sae_training.yaml`
+#### `configurations/sae_training.yaml`
 - SAE training hyperparameters
 - Layer specifications
 - Training settings (epochs, batch size, etc.)
-
-### `configurations/circuit_discovery.yaml`
-- Circuit discovery parameters (node_threshold: 0.1, edge_threshold: 0.01)
-- Model selection (currently configured for Mistral only)
-- All 10 categories: deception, harassment, harmful, hate, illegal, privacy, self-harm, sexual, unethical, violence
-- Visualization and statistical analysis settings
 
 ## Output Structure
 
