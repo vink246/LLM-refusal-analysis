@@ -276,6 +276,33 @@ This will reproduce:
 - **Assessment**: MODULAR behavior (similarity: 0.091, p < 0.05)
 - **Visualizations**: All plots in `results/visualizations/llama-2-7b-chat-hf/`
 
+### Regenerating visualizations only (when circuits already exist)
+
+If you already have circuit JSON files in `results/circuits/` (for example when someone else ran the discovery step), you can regenerate the visualizations without re-running SAE training or circuit discovery. Use the helper script included in `scripts/`:
+
+```bash
+# regenerate all visualizations from saved circuits
+python scripts/generate_visualizations_from_circuits.py \
+  --circuits-dir results/circuits --out-dir results/visualizations
+```
+
+Notes:
+- `run_circuit_analysis.py --config configurations/llama_circuit_discovery.yaml` will produce visualizations automatically as part of the full pipeline.
+- The helper script above recreates the same importance plots and network diagrams from the saved `*_circuit.json` files and places them under `results/visualizations/<model>/`.
+- If you prefer to recreate a single category visualization, pass the matching circuit file to the script (e.g. `results/circuits/meta-llama-Llama-2-7b-chat-hf_deception_circuit.json`).
+
+### Quick verification
+
+After running the visualization command, check the generated files:
+
+```bash
+ls -la results/visualizations/llama-2-7b-chat-hf/circuit_importance/
+ls -la results/visualizations/llama-2-7b-chat-hf/network_diagrams/
+ls -la results/visualizations/llama-2-7b-chat-hf/similarity_heatmaps/
+```
+
+If the files are present and have recent timestamps, the visualizations were recreated successfully.
+
 ## Configuration Files
 
 ### Primary Configuration (Used for Current Results)
