@@ -1,0 +1,32 @@
+# Mistral SAE Retraining Configuration
+# Similar to LLaMA SAE training but for Mistral-7B-Instruct-v0.1
+
+# Model settings
+models:
+  - "mistralai/Mistral-7B-Instruct-v0.1"
+
+# Categories (all OR-Bench refusal categories) 
+categories: ["deception", "harassment", "harmful", "hate", "illegal", "privacy", "self-harm", "sexual", "unethical", "violence"]
+
+# SAE training layers
+activation_layers:
+  - "residuals_10"
+  - "mlp_11" 
+  - "residuals_15"
+
+# SAE training parameters
+sae_params:
+  dictionary_size: 8192       # 20x expansion factor
+  sparsity_penalty: 0.0       # L1 penalty coefficient 
+  learning_rate: 0.001        # Learning rate for SAE training
+  num_epochs: 100             # Maximum training epochs
+  batch_size: 256             # Batch size for SAE training
+  
+# Runtime settings
+device: "cuda"
+batch_size: 4
+result_dir: "results"
+train_saes: true             # Enable SAE training
+
+# Output settings  
+create_visualizations: false

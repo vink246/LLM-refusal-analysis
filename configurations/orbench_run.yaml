@@ -1,8 +1,16 @@
-dataset_dir: "/home/hice1/mchen692/scratch/datasets/or-bench"         # Path to processed OR-Bench dataset
-categories:                                 # OR-Bench categories we want to analyze refusal across
-  - violence
+dataset_dir: "/home/hice1/ccheah6/scratch/NLP/LLM-refusal-analysis/datasets/or-bench"         # Path to processed OR-Bench dataset
+categories:                                 # OR-Bench categories we want to analyze refusal across (all 10)
   - deception
-num_samples_per_category: 100
+  - harassment  
+  - harmful
+  - hate
+  - illegal
+  - privacy
+  - self-harm
+  - sexual
+  - unethical
+  - violence
+num_samples_per_category: 1000         
 shuffle: true                               # shuffle order of data 
 models:                                     # path to inferring models
   - "meta-llama/Llama-2-7b-chat-hf"
