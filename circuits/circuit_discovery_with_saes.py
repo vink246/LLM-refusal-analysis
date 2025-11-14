@@ -40,9 +40,17 @@ class SAECircuitDiscoverer(CircuitDiscoverer):
                                  activation_file: str,
                                  refusal_labels: List[bool],
                                  model_name: str,
-                                 metric_type: str = "refusal") -> SparseFeatureCircuit:
+                                 metric_type: str = "refusal",
+                                 separate_safe_toxic: bool = False) -> SparseFeatureCircuit:
         """
         Discover circuit using trained SAE features
+        
+        Args:
+            activation_file: Path to activation file
+            refusal_labels: List of refusal labels (True = toxic/refusal, False = safe)
+            model_name: Model name
+            metric_type: Type of metric to use
+            separate_safe_toxic: If True, returns separate circuits for safe and toxic
         """
         
         # Load pre-computed activations
@@ -53,7 +61,53 @@ class SAECircuitDiscoverer(CircuitDiscoverer):
         print("Encoding activations with SAEs...")
         encoded_activations = self.sae_manager.encode_activations(raw_activations, self.trained_saes)
         
-        circuit = SparseFeatureCircuit()
+        if separate_safe_toxic:
+            # Split activations and labels by refusal status
+            refusal_labels_tensor = torch.tensor(refusal_labels, dtype=torch.bool)
+            safe_indices = ~refusal_labels_tensor
+            toxic_indices = refusal_labels_tensor
+            
+            # Filter activations
+            safe_encoded = {}
+            toxic_encoded = {}
+            for layer, features in encoded_activations.items():
+                if features.dim() == 3:
+                    # (batch, seq, hidden) -> filter batch dimension
+                    safe_encoded[layer] = features[safe_indices]
+                    toxic_encoded[layer] = features[toxic_indices]
+                else:
+                    # (batch, hidden) -> filter batch dimension
+                    safe_encoded[layer] = features[safe_indices]
+                    toxic_encoded[layer] = features[toxic_indices]
+            
+            safe_labels = [False] * safe_indices.sum().item()
+            toxic_labels = [True] * toxic_indices.sum().item()
+            
+            print(f"  Safe samples: {len(safe_labels)}, Toxic samples: {len(toxic_labels)}")
+            
+            # Discover circuits separately
+            safe_circuit = self._discover_single_circuit(
+                safe_encoded, safe_labels, model_name, metric_type, "safe"
+            )
+            toxic_circuit = self._discover_single_circuit(
+                toxic_encoded, toxic_labels, model_name, metric_type, "toxic"
+            )
+            
+            # Return as a tuple (will be handled by caller)
+            return (safe_circuit, toxic_circuit)
+        else:
+            # Original behavior: discover single circuit
+            return self._discover_single_circuit(
+                encoded_activations, refusal_labels, model_name, metric_type, "all"
+            )
+    
+    def _discover_single_circuit(self,
+                                 encoded_activations: Dict[str, torch.Tensor],
+                                 refusal_labels: List[bool],
+                                 model_name: str,
+                                 metric_type: str,
+                                 label: str = "") -> SparseFeatureCircuit:
+        """Helper method to discover a single circuit"""
         
         # Step 1: Compute feature importances
         feature_importances = self._compute_sae_feature_importances(

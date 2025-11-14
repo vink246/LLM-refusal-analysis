@@ -374,6 +374,146 @@ class CircuitVisualizer:
         ax.set_title(title, fontsize=14, fontweight='bold')
         plt.tight_layout()
         return fig
+    
+    @staticmethod
+    def create_safe_toxic_heatmap(safe_circuits: Dict[str, SparseFeatureCircuit],
+                                  toxic_circuits: Dict[str, SparseFeatureCircuit],
+                                  figsize: Tuple[int, int] = (12, 10),
+                                  title_prefix: str = "Circuit Similarity"):
+        """
+        Create heatmaps comparing safe and toxic circuits separately.
+        Returns two heatmaps: one for safe circuits, one for toxic circuits.
+        
+        Args:
+            safe_circuits: Dictionary mapping category -> circuit for safe samples
+            toxic_circuits: Dictionary mapping category -> circuit for toxic samples
+            figsize: Figure size
+            title_prefix: Prefix for plot titles
+        """
+        # Get all categories (union of both)
+        all_categories = sorted(set(list(safe_circuits.keys()) + list(toxic_circuits.keys())))
+        n = len(all_categories)
+        
+        # Compute similarity matrices
+        safe_matrix = np.zeros((n, n))
+        toxic_matrix = np.zeros((n, n))
+        
+        for i, cat1 in enumerate(all_categories):
+            for j, cat2 in enumerate(all_categories):
+                if cat1 == cat2:
+                    safe_matrix[i, j] = 1.0
+                    toxic_matrix[i, j] = 1.0
+                else:
+                    # Safe circuits
+                    if cat1 in safe_circuits and cat2 in safe_circuits:
+                        safe_matrix[i, j] = _compute_circuit_similarity(
+                            safe_circuits[cat1], safe_circuits[cat2]
+                        )
+                    # Toxic circuits
+                    if cat1 in toxic_circuits and cat2 in toxic_circuits:
+                        toxic_matrix[i, j] = _compute_circuit_similarity(
+                            toxic_circuits[cat1], toxic_circuits[cat2]
+                        )
+        
+        # Create two subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+        
+        # Safe circuits heatmap
+        im1 = ax1.imshow(safe_matrix, cmap='RdYlGn', vmin=0, vmax=1, aspect='auto')
+        cbar1 = plt.colorbar(im1, ax=ax1)
+        cbar1.set_label('Similarity Score', rotation=270, labelpad=20)
+        ax1.set_xticks(np.arange(n))
+        ax1.set_yticks(np.arange(n))
+        ax1.set_xticklabels(all_categories, rotation=45, ha='right')
+        ax1.set_yticklabels(all_categories)
+        ax1.set_title(f"{title_prefix}: Safe Circuits", fontsize=14, fontweight='bold')
+        for i in range(n):
+            for j in range(n):
+                ax1.text(j, i, f'{safe_matrix[i, j]:.2f}',
+                        ha="center", va="center", color="black", fontweight='bold')
+        
+        # Toxic circuits heatmap
+        im2 = ax2.imshow(toxic_matrix, cmap='RdYlGn', vmin=0, vmax=1, aspect='auto')
+        cbar2 = plt.colorbar(im2, ax=ax2)
+        cbar2.set_label('Similarity Score', rotation=270, labelpad=20)
+        ax2.set_xticks(np.arange(n))
+        ax2.set_yticks(np.arange(n))
+        ax2.set_xticklabels(all_categories, rotation=45, ha='right')
+        ax2.set_yticklabels(all_categories)
+        ax2.set_title(f"{title_prefix}: Toxic Circuits", fontsize=14, fontweight='bold')
+        for i in range(n):
+            for j in range(n):
+                ax2.text(j, i, f'{toxic_matrix[i, j]:.2f}',
+                        ha="center", va="center", color="black", fontweight='bold')
+        
+        plt.tight_layout()
+        return fig, {'safe': safe_matrix, 'toxic': toxic_matrix}
+    
+    @staticmethod
+    def create_cross_refusal_heatmap(safe_circuits: Dict[str, SparseFeatureCircuit],
+                                     toxic_circuits: Dict[str, SparseFeatureCircuit],
+                                     figsize: Tuple[int, int] = (12, 10),
+                                     title: str = "Safe vs Toxic Circuit Similarity"):
+        """
+        Create a heatmap comparing safe circuits (rows) with toxic circuits (columns).
+        The diagonal shows if refusal circuits for a category are the same as safe circuits.
+        
+        Args:
+            safe_circuits: Dictionary mapping category -> circuit for safe samples
+            toxic_circuits: Dictionary mapping category -> circuit for toxic samples
+            figsize: Figure size
+            title: Plot title
+        """
+        # Get all categories (union of both)
+        all_categories = sorted(set(list(safe_circuits.keys()) + list(toxic_circuits.keys())))
+        n_safe = len(all_categories)
+        n_toxic = len(all_categories)
+        
+        # Build cross-comparison matrix: safe (rows) vs toxic (columns)
+        matrix = np.zeros((n_safe, n_toxic))
+        
+        for i, safe_cat in enumerate(all_categories):
+            for j, toxic_cat in enumerate(all_categories):
+                if safe_cat in safe_circuits and toxic_cat in toxic_circuits:
+                    matrix[i, j] = _compute_circuit_similarity(
+                        safe_circuits[safe_cat], toxic_circuits[toxic_cat]
+                    )
+        
+        # Create heatmap
+        fig, ax = plt.subplots(figsize=figsize)
+        im = ax.imshow(matrix, cmap='RdYlGn', vmin=0, vmax=1, aspect='auto')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Similarity Score', rotation=270, labelpad=20)
+        
+        # Set ticks and labels
+        ax.set_xticks(np.arange(n_toxic))
+        ax.set_yticks(np.arange(n_safe))
+        ax.set_xticklabels([f"{cat} (toxic)" for cat in all_categories], rotation=45, ha='right')
+        ax.set_yticklabels([f"{cat} (safe)" for cat in all_categories])
+        
+        # Add text annotations
+        for i in range(n_safe):
+            for j in range(n_toxic):
+                ax.text(j, i, f'{matrix[i, j]:.2f}',
+                       ha="center", va="center", color="black", fontweight='bold')
+        
+        # Highlight diagonal (same category, safe vs toxic)
+        for i in range(min(n_safe, n_toxic)):
+            rect = plt.Rectangle((i-0.5, i-0.5), 1, 1, fill=False, 
+                               edgecolor='blue', linewidth=2, linestyle='--')
+            ax.add_patch(rect)
+        
+        ax.set_xlabel('Toxic Circuits (by Category)', fontsize=12)
+        ax.set_ylabel('Safe Circuits (by Category)', fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        ax.text(0.02, 0.98, 'Diagonal: Same category\n(safe vs toxic)', 
+               transform=ax.transAxes, fontsize=10, verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        
+        plt.tight_layout()
+        return fig, matrix
 
 
 def compare_circuits_across_categories(circuit_dict: Dict[str, SparseFeatureCircuit]) -> Tuple[Dict[str, float], Dict[str, Dict[str, float]]]:

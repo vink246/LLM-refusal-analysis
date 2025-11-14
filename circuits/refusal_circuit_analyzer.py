@@ -46,7 +46,10 @@ class RefusalCircuitAnalyzer:
         self.activation_manager = ActivationManager(str(self.result_dir / 'activations'))
         self.sae_manager = SAEManager(self.config.get('sae_dir', str(self.result_dir / 'saes')))
         self.circuits = {}  # Store discovered circuits: {model_name: {category: circuit}}
+        self.safe_circuits = {}  # Store safe circuits: {model_name: {category: circuit}}
+        self.toxic_circuits = {}  # Store toxic circuits: {model_name: {category: circuit}}
         self.comparison_results = {}  # Store comparison results for final report
+        self.separate_safe_toxic = self.config.get('separate_safe_toxic', False)  # Whether to discover separate circuits
     
     def _validate_config(self):
         """Validate configuration file has required fields"""
@@ -194,33 +197,83 @@ class RefusalCircuitAnalyzer:
                     continue
             
             try:
-                circuit = discoverer.discover_circuit_with_saes(
-                    activation_file=str(activation_file),
-                    refusal_labels=refusal_labels,
-                    model_name=model_name
-                )
-                
-                model_circuits[category] = circuit
-                
-                # Save circuit
-                circuit_dir = self.result_dir / "circuits"
-                circuit_dir.mkdir(exist_ok=True)
-                circuit_file = circuit_dir / f"{safe_model_name}_{category}_circuit.json"
-                
-                circuit_data = {
-                    'model_name': model_name,
-                    'category': category,
-                    'nodes': {k: v for k, v in circuit.nodes.items()},
-                    'edges': {f"{src}_{tgt}": data for (src, tgt), data in circuit.edges.items()},
-                    'node_importances': {k: float(v) for k, v in circuit.node_importances.items()},
-                    'edge_importances': {f"{src}_{tgt}": float(v) for (src, tgt), v in circuit.edge_importances.items()}
-                }
-                
-                with open(circuit_file, 'w') as f:
-                    json.dump(circuit_data, f, indent=2)
-                
-                print(f"    Circuit saved to {circuit_file}")
-                print(f"    Nodes: {len(circuit.nodes)}, Edges: {len(circuit.edges)}")
+                if self.separate_safe_toxic:
+                    # Discover separate safe and toxic circuits
+                    safe_circuit, toxic_circuit = discoverer.discover_circuit_with_saes(
+                        activation_file=str(activation_file),
+                        refusal_labels=refusal_labels,
+                        model_name=model_name,
+                        separate_safe_toxic=True
+                    )
+                    
+                    # Store separately
+                    if model_name not in self.safe_circuits:
+                        self.safe_circuits[model_name] = {}
+                    if model_name not in self.toxic_circuits:
+                        self.toxic_circuits[model_name] = {}
+                    
+                    self.safe_circuits[model_name][category] = safe_circuit
+                    self.toxic_circuits[model_name][category] = toxic_circuit
+                    
+                    # Also store combined for backward compatibility
+                    model_circuits[category] = safe_circuit  # Default to safe for combined view
+                    
+                    # Save circuits separately
+                    circuit_dir = self.result_dir / "circuits"
+                    circuit_dir.mkdir(exist_ok=True)
+                    
+                    safe_circuit_file = circuit_dir / f"{safe_model_name}_{category}_safe_circuit.json"
+                    toxic_circuit_file = circuit_dir / f"{safe_model_name}_{category}_toxic_circuit.json"
+                    
+                    for circuit, circuit_file, circuit_type in [
+                        (safe_circuit, safe_circuit_file, "safe"),
+                        (toxic_circuit, toxic_circuit_file, "toxic")
+                    ]:
+                        circuit_data = {
+                            'model_name': model_name,
+                            'category': category,
+                            'circuit_type': circuit_type,
+                            'nodes': {k: v for k, v in circuit.nodes.items()},
+                            'edges': {f"{src}_{tgt}": data for (src, tgt), data in circuit.edges.items()},
+                            'node_importances': {k: float(v) for k, v in circuit.node_importances.items()},
+                            'edge_importances': {f"{src}_{tgt}": float(v) for (src, tgt), v in circuit.edge_importances.items()}
+                        }
+                        
+                        with open(circuit_file, 'w') as f:
+                            json.dump(circuit_data, f, indent=2)
+                        
+                        print(f"    {circuit_type.capitalize()} circuit saved to {circuit_file}")
+                        print(f"      Nodes: {len(circuit.nodes)}, Edges: {len(circuit.edges)}")
+                else:
+                    # Original behavior: discover single circuit
+                    circuit = discoverer.discover_circuit_with_saes(
+                        activation_file=str(activation_file),
+                        refusal_labels=refusal_labels,
+                        model_name=model_name,
+                        separate_safe_toxic=False
+                    )
+                    
+                    model_circuits[category] = circuit
+                    
+                    # Save circuit
+                    circuit_dir = self.result_dir / "circuits"
+                    circuit_dir.mkdir(exist_ok=True)
+                    circuit_file = circuit_dir / f"{safe_model_name}_{category}_circuit.json"
+                    
+                    circuit_data = {
+                        'model_name': model_name,
+                        'category': category,
+                        'nodes': {k: v for k, v in circuit.nodes.items()},
+                        'edges': {f"{src}_{tgt}": data for (src, tgt), data in circuit.edges.items()},
+                        'node_importances': {k: float(v) for k, v in circuit.node_importances.items()},
+                        'edge_importances': {f"{src}_{tgt}": float(v) for (src, tgt), v in circuit.edge_importances.items()}
+                    }
+                    
+                    with open(circuit_file, 'w') as f:
+                        json.dump(circuit_data, f, indent=2)
+                    
+                    print(f"    Circuit saved to {circuit_file}")
+                    print(f"    Nodes: {len(circuit.nodes)}, Edges: {len(circuit.edges)}")
                 
             except Exception as e:
                 print(f"    Error discovering circuit: {e}")
@@ -323,6 +376,7 @@ class RefusalCircuitAnalyzer:
                     heatmap_dir = model_viz_dir / "similarity_heatmaps"
                     heatmap_dir.mkdir(exist_ok=True)
                     
+                    # Original similarity heatmap (all categories)
                     fig = CircuitVisualizer.create_similarity_heatmap(
                         similarity_matrix,
                         title=f"Circuit Similarity: {model_name}"
@@ -331,8 +385,41 @@ class RefusalCircuitAnalyzer:
                     fig.savefig(heatmap_path, dpi=150, bbox_inches='tight')
                     plt.close(fig)
                     print(f"    Saved similarity heatmap: {heatmap_path}")
+                    
+                    # Generate safe vs toxic heatmaps if available
+                    if (self.separate_safe_toxic and 
+                        model_name in self.safe_circuits and 
+                        model_name in self.toxic_circuits):
+                        
+                        safe_circuits = self.safe_circuits[model_name]
+                        toxic_circuits = self.toxic_circuits[model_name]
+                        
+                        # Safe vs Toxic separate heatmaps
+                        if len(safe_circuits) > 1 and len(toxic_circuits) > 1:
+                            fig, matrices = CircuitVisualizer.create_safe_toxic_heatmap(
+                                safe_circuits, toxic_circuits,
+                                title_prefix=f"Circuit Similarity: {model_name}"
+                            )
+                            heatmap_path = heatmap_dir / f"{model_folder}_safe_toxic_separate_heatmap.png"
+                            fig.savefig(heatmap_path, dpi=150, bbox_inches='tight')
+                            plt.close(fig)
+                            print(f"    Saved safe/toxic separate heatmap: {heatmap_path}")
+                        
+                        # Cross-comparison heatmap (safe vs toxic)
+                        if len(safe_circuits) > 0 and len(toxic_circuits) > 0:
+                            fig, cross_matrix = CircuitVisualizer.create_cross_refusal_heatmap(
+                                safe_circuits, toxic_circuits,
+                                title=f"Safe vs Toxic Circuit Similarity: {model_name}"
+                            )
+                            heatmap_path = heatmap_dir / f"{model_folder}_safe_vs_toxic_cross_heatmap.png"
+                            fig.savefig(heatmap_path, dpi=150, bbox_inches='tight')
+                            plt.close(fig)
+                            print(f"    Saved safe vs toxic cross-heatmap: {heatmap_path}")
+                            
                 except Exception as e:
                     print(f"    Error creating similarity heatmap: {e}")
+                    import traceback
+                    traceback.print_exc()
     
     def _generate_reports(self):
         """Generate visualization and analysis reports"""
