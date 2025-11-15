@@ -23,6 +23,17 @@ activation_layers:
   - "mlp_11"
 batch_size: 4
 device: "cuda"
+# SAE Training Configuration
+# Note: SAE training balancing is independent of inference-time data loading
+sae_training:
+  balance_strategy: "stratified"  # "none", "stratified", or "weighted"
+  samples_per_category: 100  # Target samples per category after balancing (None = use all available)
+  safe_toxic_ratio: 0.5  # Target ratio of safe to toxic (0.5 = equal split)
+  max_samples_per_category: 1000  # Maximum samples per category for downsampling
+
+# Circuit Discovery Configuration
+discover_separate_safe_toxic: true  # If true, discover separate circuits for safe and toxic within each category
+
 analysis:
   similarity_threshold: 0.8
   activation_ratio_threshold: 2.0

@@ -236,26 +236,6 @@ class CircuitDiscoverer:
         return importances
 
 
-class SparseAutoencoder(nn.Module):
-    """Simple sparse autoencoder for feature decomposition"""
-    
-    def __init__(self, input_dim: int, hidden_dim: int, sparsity_coeff: float = 0.01):
-        super().__init__()
-        self.encoder = nn.Linear(input_dim, hidden_dim)
-        self.decoder = nn.Linear(hidden_dim, input_dim)
-        self.sparsity_coeff = sparsity_coeff
-        
-    def forward(self, x):
-        # Apply ReLU for sparsity
-        hidden = nn.ReLU()(self.encoder(x))
-        
-        # L1 sparsity regularization
-        sparsity_loss = self.sparsity_coeff * hidden.norm(p=1)
-        
-        reconstructed = self.decoder(hidden)
-        reconstruction_loss = nn.MSELoss()(reconstructed, x)
-        
-        return reconstructed, hidden, reconstruction_loss + sparsity_loss
 
 
 class CircuitVisualizer:
@@ -455,3 +435,57 @@ def _compute_circuit_similarity(circuit1: SparseFeatureCircuit, circuit2: Sparse
     combined_similarity = 0.4 * node_similarity + 0.3 * edge_similarity + 0.3 * abs(importance_corr)
     
     return combined_similarity
+
+
+def compare_safe_vs_toxic_within_category(circuit_safe: SparseFeatureCircuit, 
+                                          circuit_toxic: SparseFeatureCircuit) -> float:
+    """
+    Compare safe vs toxic circuits for a single category.
+    
+    Args:
+        circuit_safe: Circuit discovered from safe prompts
+        circuit_toxic: Circuit discovered from toxic prompts
+    
+    Returns:
+        Similarity score between safe and toxic circuits
+    """
+    return _compute_circuit_similarity(circuit_safe, circuit_toxic)
+
+
+def compare_safe_vs_toxic_within_categories(circuits_dict: Dict[str, SparseFeatureCircuit]) -> Dict[str, float]:
+    """
+    Compare safe vs toxic circuits for all categories.
+    
+    Args:
+        circuits_dict: Dictionary mapping circuit keys (e.g., "deception_safe", "deception_toxic") to circuits
+    
+    Returns:
+        Dictionary mapping category names to safe-toxic similarity scores
+    """
+    similarities = {}
+    
+    # Group circuits by category
+    category_circuits = {}
+    for circuit_key, circuit in circuits_dict.items():
+        # Parse category from key (format: "{category}_safe" or "{category}_toxic")
+        if circuit_key.endswith('_safe'):
+            category = circuit_key[:-5]  # Remove "_safe"
+            if category not in category_circuits:
+                category_circuits[category] = {}
+            category_circuits[category]['safe'] = circuit
+        elif circuit_key.endswith('_toxic'):
+            category = circuit_key[:-6]  # Remove "_toxic"
+            if category not in category_circuits:
+                category_circuits[category] = {}
+            category_circuits[category]['toxic'] = circuit
+    
+    # Compare safe vs toxic for each category
+    for category, circuits in category_circuits.items():
+        if 'safe' in circuits and 'toxic' in circuits:
+            similarity = compare_safe_vs_toxic_within_category(
+                circuits['safe'], 
+                circuits['toxic']
+            )
+            similarities[category] = similarity
+    
+    return similarities

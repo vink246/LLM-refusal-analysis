@@ -9,7 +9,7 @@ This project analyzes whether LLM refusal behavior is **monolithic** (shared cir
 3. Discovering sparse feature circuits for each refusal category using SAE-encoded features
 4. Comparing circuits across categories with statistical significance testing
 
-**Current Status**: The pipeline supports both Llama-2 and Mistral models. The results in this repository were generated using the LLaMA-2-7b-chat-hf model with configuration `configurations/llama_circuit_discovery.yaml`.
+**Current Status**: The pipeline supports both Llama-2 and Mistral models. Configuration files are available in the `configurations/` directory.
 
 ## Project Components
 
@@ -25,6 +25,7 @@ This project analyzes whether LLM refusal behavior is **monolithic** (shared cir
 - Trains Sparse Autoencoders on collected activations
 - Decomposes activations into sparse, interpretable features
 - Supports training separate SAEs for each model layer
+- **Balanced sampling**: Supports stratified or weighted sampling to ensure equal representation of safe and toxic prompts across categories
 - Saves trained SAEs for circuit discovery
 
 #### 3. **Circuit Discovery** (`circuits/`)
@@ -32,7 +33,8 @@ This project analyzes whether LLM refusal behavior is **monolithic** (shared cir
   - `SparseFeatureCircuit`: Represents discovered circuits with nodes, edges, and importance scores
   - `CircuitDiscoverer`: Base circuit discovery algorithm 
   - `CircuitVisualizer`: Visualization tools (importance plots, network diagrams, heatmaps)
-  - `compare_circuits_across_categories`: Cross-category similarity computation
+  - `compare_circuits_across_categories`: Cross-category similarity computation (Type 1)
+  - `compare_safe_vs_toxic_within_categories`: Safe vs toxic circuit comparison (Type 2)
   - Faithfulness and completeness metrics for circuit evaluation
 - **`circuit_discovery_with_saes.py`**: SAE-based circuit discovery
   - `SAECircuitDiscoverer`: Discovers circuits using trained SAE features and correlation analysis
@@ -41,7 +43,11 @@ This project analyzes whether LLM refusal behavior is **monolithic** (shared cir
   - Builds circuit graphs with SAE features as nodes
 - **`refusal_circuit_analyzer.py`**: Main orchestrator class
   - `RefusalCircuitAnalyzer`: Complete analysis workflow coordinator
-  - Manages SAE training via `SAEManager`, circuit discovery, and cross-category comparison
+  - Manages SAE training via `SAEManager` with balanced sampling support
+  - Discovers separate circuits for safe and toxic prompts within each category
+  - Performs two types of comparisons:
+    - Type 1: Category-to-category (modular vs monolithic analysis)
+    - Type 2: Safe vs toxic within each category
   - Generates comprehensive reports, visualizations, and statistical assessments
   - Configuration validation and organized output directory structure
 - **`statistical_analysis.py`**: Statistical hypothesis testing
@@ -188,7 +194,7 @@ python src/run_inference.py --config configurations/orbench_run.yaml
 ```
 
 This will:
-- Load 100 samples per category (50 safe + 50 toxic)
+- Load samples per category based on `num_samples_per_category` and `safe_toxic_ratio` in the config
 - Run inference on specified models
 - Save activations to `results/activations/`
 - Save refusal labels to `results/refusal_labels/`
@@ -196,48 +202,60 @@ This will:
 
 **Note**: This step requires GPU access. Use a PACE ICE GPU node or submit as a job.
 
-**Current Configuration**: The default `orbench_run.yaml` is configured for 2 categories (violence, deception) and 100 samples per category. To analyze all 10 categories, update the configuration file or use one of the alternative configs like `circuit_discovery.yaml`.
+**Current Configuration**: The `orbench_run.yaml` is configured for all 10 categories. The `safe_toxic_ratio` parameter controls the ratio during inference-time data loading (defaults to 0.5 if not specified).
 
 ### Step 2: Train Sparse Autoencoders
 
-Train SAEs on the collected activations:
+Train SAEs on the collected activations with balanced sampling:
 
 ```bash
-python run_circuit_analysis.py --config configurations/sae_training.yaml --train-saes
+python run_circuit_analysis.py --config configurations/orbench_run.yaml --train-saes
 ```
 
-Or modify `configurations/sae_training.yaml` to set `train_saes: true`.
+Or modify the config file to set `train_saes: true` and configure `sae_training` parameters.
 
 This will:
 - Load activation files for each model and category combination
+- **Apply balanced sampling**: Load refusal labels and sample equally from safe and toxic prompts per category
 - Train separate SAEs for each specified layer using the `SAEManager` class
 - Use correlation-based feature importance computation for circuit discovery
 - Save trained SAEs with training history to `results/saes/<model_name>/`
 
 **Note**: SAE training is computationally intensive and may require significant GPU memory. Use GPU nodes and consider running as a batch job. The SAE training integrates with the circuit discovery pipeline through the `SAECircuitDiscoverer` class.
 
-**Performance Note**: On high-end GPUs like H200, SAE training may complete very quickly due to the small default dataset (100 samples per category in `orbench_run.yaml`). If training completes in seconds, verify that: (1) activation files were found and loaded, (2) you see progress bars for multiple epochs and batches, and (3) SAE files are saved to `results/saes/<model_name>/`. For more thorough training, increase `sae_max_samples` or use the full 10-category configuration in `circuit_discovery.yaml`.
+**Balanced Sampling**: The `sae_training` section in the config controls balancing:
+- `balance_strategy`: "stratified" (equal samples per category and safe/toxic) or "weighted" (inverse frequency weighting)
+- `samples_per_category`: Target samples per category after balancing
+- `safe_toxic_ratio`: Target ratio (0.5 = equal split)
 
 ### Step 3: Discover Circuits
 
 Discover sparse feature circuits for each category:
 
 ```bash
-# Use the configuration that generated the repository results
-python run_circuit_analysis.py --config configurations/llama_circuit_discovery.yaml
+python run_circuit_analysis.py --config configurations/orbench_run.yaml
+```
 
-# Alternative: Use Mistral configuration for comparison
-python run_circuit_analysis.py --config configurations/mistral_circuit_discovery.yaml
+Or use model-specific configs:
+```bash
+python run_circuit_analysis.py --config configurations/sae_retrain_llama.yaml
+python run_circuit_analysis.py --config configurations/sae_retrain_mistral.yaml
 ```
 
 This will:
 - Load trained SAEs
 - Discover circuits for each model-category combination
+  - If `discover_separate_safe_toxic: true`, discovers separate circuits for safe and toxic prompts within each category
+  - Also discovers category-level circuits (combining safe+toxic) for Type 1 comparison
 - Save circuits to `results/circuits/`
-- Compare circuits across categories with statistical significance testing
+- Perform two types of comparisons:
+  - **Type 1**: Category-to-category (modular vs monolithic analysis)
+  - **Type 2**: Safe vs toxic within each category
 - Generate similarity metrics and modularity assessment (monolithic/partially modular/modular)
 - Compute faithfulness and completeness metrics for each circuit
-- Create similarity heatmaps showing circuit relationships across categories
+- Create similarity heatmaps:
+  - Category-to-category similarity heatmap
+  - Safe vs toxic within category similarity chart
 - Generate circuit visualizations (importance plots and network diagrams) for each category
 - Create comprehensive final analysis reports (JSON and text format) with conclusions
 
@@ -251,89 +269,50 @@ python run_analysis.py --results-dir results
 
 This generates comprehensive evaluation metrics and reports.
 
-## Reproducing Repository Results
+## Running the Complete Pipeline
 
-To reproduce the exact results shown in this repository:
+To run the complete analysis pipeline:
 
 1. **Run inference** (if activations don't exist):
    ```bash
    python src/run_inference.py --config configurations/orbench_run.yaml
    ```
 
-2. **Train SAEs** (if SAEs don't exist):
+2. **Train SAEs with balanced sampling** (if SAEs don't exist):
    ```bash  
-   python run_circuit_analysis.py --config configurations/sae_training.yaml --train-saes
+   python run_circuit_analysis.py --config configurations/orbench_run.yaml --train-saes
    ```
 
-3. **Generate circuits with the exact configuration used**:
+3. **Discover circuits and run comparisons**:
    ```bash
-   python run_circuit_analysis.py --config configurations/llama_circuit_discovery.yaml
+   python run_circuit_analysis.py --config configurations/orbench_run.yaml
    ```
 
-This will reproduce:
-- **Model**: LLaMA-2-7b-chat-hf results
-- **Circuit sizes**: 26-84 nodes per category
-- **Assessment**: MODULAR behavior (similarity: 0.091, p < 0.05)
-- **Visualizations**: All plots in `results/visualizations/llama-2-7b-chat-hf/`
-
-### Regenerating visualizations only (when circuits already exist)
-
-If you already have circuit JSON files in `results/circuits/` (for example when someone else ran the discovery step), you can regenerate the visualizations without re-running SAE training or circuit discovery. Use the helper script included in `scripts/`:
-
-```bash
-# regenerate all visualizations from saved circuits
-python scripts/generate_visualizations_from_circuits.py \
-  --circuits-dir results/circuits --out-dir results/visualizations
-```
-
-Notes:
-- `run_circuit_analysis.py --config configurations/llama_circuit_discovery.yaml` will produce visualizations automatically as part of the full pipeline.
-- The helper script above recreates the same importance plots and network diagrams from the saved `*_circuit.json` files and places them under `results/visualizations/<model>/`.
-- If you prefer to recreate a single category visualization, pass the matching circuit file to the script (e.g. `results/circuits/meta-llama-Llama-2-7b-chat-hf_deception_circuit.json`).
-
-### Quick verification
-
-After running the visualization command, check the generated files:
-
-```bash
-ls -la results/visualizations/llama-2-7b-chat-hf/circuit_importance/
-ls -la results/visualizations/llama-2-7b-chat-hf/network_diagrams/
-ls -la results/visualizations/llama-2-7b-chat-hf/similarity_heatmaps/
-```
-
-If the files are present and have recent timestamps, the visualizations were recreated successfully.
+This will:
+- Discover circuits for each category (separate safe/toxic if configured)
+- Perform Type 1 (category-to-category) and Type 2 (safe vs toxic) comparisons
+- Generate visualizations and comprehensive reports
+- Save results to `results/circuits/` and `results/visualizations/`
 
 ## Configuration Files
 
-### Primary Configuration (Used for Current Results)
-
-#### `configurations/llama_circuit_discovery.yaml` ⭐ **USED FOR REPOSITORY RESULTS**
-- **Model**: LLaMA-2-7b-chat-hf (used to generate all results in this repository)
-- **Circuit parameters**: node_threshold: 0.8, edge_threshold: 0.01 (optimized for interpretable circuits)
-- **All 10 categories**: deception, harassment, harmful, hate, illegal, privacy, self-harm, sexual, unethical, violence
-- **Produces**: 26-84 node circuits with meaningful edge connections
-- **Statistical results**: Average similarity 0.091, MODULAR assessment (HIGH confidence)
-
-### Alternative Configuration
-
-#### `configurations/mistral_circuit_discovery.yaml`
-- **Model**: Mistral-7B-Instruct-v0.1 (alternative model for comparison)
-- **Circuit parameters**: node_threshold: 0.1, edge_threshold: 0.01 (may need tuning)
-- **All 10 categories**: deception, harassment, harmful, hate, illegal, privacy, self-harm, sexual, unethical, violence
-- **Note**: Not used for current repository results
-
-### Supporting Configurations
+### Primary Configuration
 
 #### `configurations/orbench_run.yaml`
-- Dataset path and OR-Bench categories (currently configured for 2 categories: violence, deception)
-- Model specifications (Llama-2-7b-chat-hf, Mistral-7B-Instruct-v0.1)
-- Activation layer specifications (residuals_10, residuals_15, mlp_11)
-- Batch size and device settings
+- **Models**: Llama-2-7b-chat-hf, Mistral-7B-Instruct-v0.1
+- **Categories**: All 10 OR-Bench categories (deception, harassment, harmful, hate, illegal, privacy, self-harm, sexual, unethical, violence)
+- **Activation layers**: residuals_10, residuals_15, mlp_11
+- **SAE training**: Balanced sampling configuration (stratified sampling with 50-50 safe/toxic ratio)
+- **Circuit discovery**: Separate safe/toxic circuits enabled by default
+- **Analysis**: Modularity assessment thresholds and statistical testing parameters
 
-#### `configurations/sae_training.yaml`
-- SAE training hyperparameters
-- Layer specifications
-- Training settings (epochs, batch size, etc.)
+### Model-Specific Configurations
+
+#### `configurations/sae_retrain_llama.yaml`
+- Llama-2-7b-chat-hf specific SAE training configuration
+
+#### `configurations/sae_retrain_mistral.yaml`
+- Mistral-7B-Instruct-v0.1 specific SAE training configuration
 
 ## Output Structure
 
@@ -352,8 +331,10 @@ results/
 │       ├── <layer>_sae.pt
 │       └── <layer>_training_history.json
 ├── circuits/                 # Discovered circuits (.json)
-│   ├── <safe_model_name>_<category>_circuit.json
-│   └── <safe_model_name>_comparison.json
+│   ├── <safe_model_name>_<category>_circuit.json (category-level, if discover_separate_safe_toxic=false)
+│   ├── <safe_model_name>_<category>_safe_circuit.json (safe circuit)
+│   ├── <safe_model_name>_<category>_toxic_circuit.json (toxic circuit)
+│   └── <safe_model_name>_comparison.json (comparison results)
 ├── visualizations/           # Circuit visualizations (.png)
 │   └── <model_folder>/
 │       ├── circuit_importance/
@@ -361,7 +342,8 @@ results/
 │       ├── network_diagrams/
 │       │   └── <category>_network_diagram.png
 │       └── similarity_heatmaps/
-│           └── <model_folder>_similarity_heatmap.png
+│           ├── <model_folder>_category_to_category_heatmap.png (Type 1)
+│           └── <model_folder>_safe_vs_toxic_heatmap.png (Type 2)
 ├── circuit_analysis_report.json    # Comprehensive circuit analysis (JSON)
 ├── circuit_analysis_summary.txt    # Human-readable analysis summary
 └── analysis_results.json    # Inference evaluation report (from run_analysis.py)
